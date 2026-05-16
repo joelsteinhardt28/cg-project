@@ -19,6 +19,27 @@
 #include "structs.hpp"
 
 
+// * Node structure for the KD-tree
+struct KDNode {
+    Point p;        // Splitting point (if internal node)
+    size_t idx;     // Original index from the input dataset
+    bool isLeaf;
+    std::vector<size_t> pointIndices;  // Indices of points in the leaf node (only for leaf nodes)
+    
+    // Pointers to the child nodes in the KD-tree
+    KDNode* left;
+    KDNode* right;
+
+    // The two corners of the bounding box for this node's subtree
+    Point minBound;  
+    Point maxBound;
+    
+    // Constructors for internal nodes and leaf nodes
+    KDNode(Point const& point, size_t index) : p(point), idx(index), isLeaf(false), left(nullptr), right(nullptr) {}
+    KDNode(std::vector<size_t> const& indices) : isLeaf(true), pointIndices(indices), left(nullptr), right(nullptr) {}
+};
+
+
 // KD-Tree for 3D points
 class kdTree {
 

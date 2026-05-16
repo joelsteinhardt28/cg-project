@@ -13,6 +13,9 @@
 
 #include <pmp/surface_mesh.h>
 #include <pmp/io/io.h>
+#include <pmp/bounding_box.h>
+#include <pmp/algorithms/utilities.h>
+#include <pmp/exceptions.h>
 
 #include "io.hpp"
 
@@ -54,7 +57,7 @@ polyscope::PointCloud* registerPmpPointCloud(const std::string& name, const pmp:
 void generate_random_cutting_plane(AppState& state) {
     polyscope::removeAllSlicePlanes();
 
-    const auto& points = state.sds->getPoints();
+    const auto& points = state.bboxVertices.empty() ? std::vector<Point>() : state.bboxVertices;
     if (points.size() < 3) return;
     
     // Pick 3 random points to define a valid plane in the cloud
@@ -209,36 +212,35 @@ void render(AppState& state) {
                 state.selectedOffFileIdx = i;
                 std::filesystem::path selectedPath = std::filesystem::path(state.targetDir) / state.offFiles[i];
                 
-                // std::vector<Point> points;
-                // std::vector<Face> faces;
-                // readOff(selectedPath.string(), points, faces);
+                try {
+                    pmp::SurfaceMesh tempMesh;
+                    std::cout << "[INFO] Reading mesh from: " << selectedPath << std::endl;
+                    pmp::read(tempMesh, selectedPath);
+                    state.mesh = std::move(tempMesh);
+                    std::cout << "[INFO] Mesh loaded: " << state.mesh.n_vertices() << " vertices, " << state.mesh.n_faces() << " faces." << std::endl;
 
-                pmp::SurfaceMesh mesh;
-                std::cout << "[INFO] Reading mesh from: " << selectedPath << std::endl;
-                pmp::read(mesh, selectedPath);
-                std::cout << "[INFO] Mesh loaded: " << mesh.n_vertices() << " vertices, " << mesh.n_faces() << " faces." << std::endl;
+                    state.sc = registerPmpMesh("Mesh", state.mesh);
+                    state.pc = registerPmpPointCloud("Points", state.mesh);
+                    if (!state.mesh.is_empty()) state.meshLoaded = true;
 
-                std::vector<Point> points;
-                points.reserve(mesh.n_vertices());
-                for (auto v : mesh.vertices()) {
-                    auto p = mesh.position(v);
-                    points.push_back({p[0], p[1], p[2]});
+                    registerBoundingBox(state);
+
+                    // Point cloud cosmetics
+                    state.pc->setEnabled(false);
+
+                    // Reset camera to fit the new mesh
+                    polyscope::view::resetCameraToHomeView();
+                } catch (const pmp::TopologyException& e) {
+                    std::cerr << "[ERROR] Topology error while loading " << selectedPath << ": " << e.what() << std::endl;
+                    polyscope::error("Failed to load mesh: " + std::string(e.what()) + "\nThis is likely due to non-manifold geometry.");
+                    state.selectedOffFileIdx = -1;
+                    state.meshLoaded = false;
+                } catch (const std::exception& e) {
+                    std::cerr << "[ERROR] Error while loading " << selectedPath << ": " << e.what() << std::endl;
+                    polyscope::error("Failed to load mesh: " + std::string(e.what()));
+                    state.selectedOffFileIdx = -1;
+                    state.meshLoaded = false;
                 }
-
-                // Register mesh and pc and build kd-Tree
-                state.sc = registerPmpMesh("Mesh", mesh);
-                state.pc = registerPmpPointCloud("Points", mesh);
-                
-                state.sds = std::make_unique<SpatialDataStructure>(points, state.maxLeafSize);
-
-                // Calculate bounding box vertices
-                registerBoundingBox(state);
-
-                // Point cloud cosmetics
-                state.pc->setEnabled(false);
-
-                // Reset camera to fit the new mesh
-                polyscope::view::resetCameraToHomeView();
             }
             // Set the initial focus when opening the combo (scrolling + keyboard navigation focus)
             if (isSelected) {
@@ -249,130 +251,31 @@ void render(AppState& state) {
     }
 
 
-    if (state.sds != nullptr) {
+    if (state.meshLoaded) {
         // Show these options only if the spatial data structure actually exists (i.e. after building)
-
-        // * Handle mouse clicks
-        ImGuiIO& io = ImGui::GetIO();
-
-        if (!io.WantCaptureMouse && io.KeyCtrl && ImGui::IsMouseClicked(0)) {
-            ImVec2 mousePos = ImGui::GetMousePos();
-            auto pick = polyscope::pick::pickAtScreenCoords(glm::vec2(mousePos.x, mousePos.y));
-            if (pick.first != nullptr && pick.first->name == "Points") {
-                state.queryPointIdx = pick.second;
-                state.showQueryDialog = true;
-
-                Point queryPoint = state.sds->getPoints()[state.queryPointIdx];
-
-                // Delete old query point and result
-                polyscope::removePointCloud("Query Point");
-                polyscope::removePointCloud("Query Result");
-
-                polyscope::PointCloud* queryPointPC = polyscope::registerPointCloud("Query Point", std::vector<Point>{queryPoint});
-                queryPointPC->setPointColor({0.8f, 0.2f, 0.2f});
-                queryPointPC->setPointRadius(0.008f);
-            }
-
-        }
-
-        ImGui::Separator();
 
         if (ImGui::Button("Generate Random Cutting Plane")) {
             // generate_random_cutting_plane(state);
             generate_random_bbox_plane(state);
-        }
-
-        // * Slider to adjust max leaf size
-        if (ImGui::SliderInt("Max Points per Leaf", &state.maxLeafSize, 1, 20)) {
-            // Rebuild the tree
-            state.sds->rebuildTree(state.maxLeafSize);
-
-            // Fetch newly calculated splitting planes
-            std::vector<Point> planeVertices;
-            std::vector<Face> planeFaces;
-            state.sds->getTree().getSplittingPlanes(state.sds->getTree().getRoot(), 0, planeVertices, planeFaces);
-
-            // Update the visualization
-            if (!planeVertices.empty()) {
-                auto* planesMesh = polyscope::registerSurfaceMesh("KD-Tree Splitting Planes", planeVertices, planeFaces);
-                planesMesh->setSurfaceColor({0.96f, 0.36f, 0.3f});
-                planesMesh->setTransparency(0.7f);
-                planesMesh->setEdgeColor({0.0f, 0.0f, 0.0f});
-                planesMesh->setEdgeWidth(2.0f);
-            } else {
-                polyscope::removeSurfaceMesh("KD-Tree Splitting Planes");
-            }
-        }
-
-        // * Query dialog
-        if (state.showQueryDialog) {
-            ImGui::Separator();
-
-            ImGui::Text("-- KD-TREE QUERY --");
-            ImGui::Text("Selected Target Index: %d", state.queryPointIdx);
-
-            // Query type selection
-            ImGui::RadioButton("Radius", &state.queryType, 1); ImGui::SameLine();
-            ImGui::RadioButton("K-Nearest", &state.queryType, 2); ImGui::Separator();
-
-            // Context specific info
-            if (state.queryType == 1) {
-                ImGui::DragFloat("Query Radius", &state.queryRadius, 0.01f, 0.1f, 50.0f, "%.3f");
-            } else if (state.queryType == 2) {
-                ImGui::SliderInt("K for KNN", &state.queryK, 1, state.sds->getPoints().size());
-            }
-
-            // Run Button
-            if (ImGui::Button("Run Query")) {
-                Point queryPoint = state.sds->getPoints()[state.queryPointIdx];
-
-                std::vector<std::size_t> resultIndices;
-                switch(state.queryType) {
-                    case 1: // Radius search
-                        resultIndices = state.sds->getTree().collectInRadius(queryPoint, state.queryRadius);
-                        break;
-                    case 2: // K-Nearest search
-                        resultIndices = state.sds->getTree().collectKNearest(queryPoint, state.queryK);
-                        break;
-                    default:
-                        polyscope::warning("Invalid query type selected");
-                }
-
-                // Visualize results of query
-                std::vector<Point> queryResultPoints;
-                queryResultPoints.reserve(resultIndices.size());
-                for (size_t idx : resultIndices) {
-                    queryResultPoints.push_back(state.sds->getPoints()[idx]);
-                }
-
-                auto* queryResultPC = polyscope::registerPointCloud("Query Result", queryResultPoints);
-                queryResultPC->setPointColor({0.2f, 0.8f, 0.2f});
-                queryResultPC->setPointRadius(0.007f);
-            }
-
-            ImGui::SameLine();
-
-            if (ImGui::Button("Clear Query Result")) {
-                polyscope::removePointCloud("Query Result");
-                polyscope::removePointCloud("Query Point");
-            }
-
-            // ImGui::End();
         }
         
     }
 }
 
 void registerBoundingBox(AppState& state) {
+    if (!state.meshLoaded) return;
+
+    pmp::BoundingBox bbox = pmp::bounds(state.mesh);
+
     state.bboxVertices = {
-        {state.sds->getTree().getRoot()->minBound[0], state.sds->getTree().getRoot()->minBound[1], state.sds->getTree().getRoot()->minBound[2]},
-        {state.sds->getTree().getRoot()->maxBound[0], state.sds->getTree().getRoot()->minBound[1], state.sds->getTree().getRoot()->minBound[2]},
-        {state.sds->getTree().getRoot()->maxBound[0], state.sds->getTree().getRoot()->maxBound[1], state.sds->getTree().getRoot()->minBound[2]},
-        {state.sds->getTree().getRoot()->minBound[0], state.sds->getTree().getRoot()->maxBound[1], state.sds->getTree().getRoot()->minBound[2]},
-        {state.sds->getTree().getRoot()->minBound[0], state.sds->getTree().getRoot()->minBound[1], state.sds->getTree().getRoot()->maxBound[2]},
-        {state.sds->getTree().getRoot()->maxBound[0], state.sds->getTree().getRoot()->minBound[1], state.sds->getTree().getRoot()->maxBound[2]},
-        {state.sds->getTree().getRoot()->maxBound[0], state.sds->getTree().getRoot()->maxBound[1], state.sds->getTree().getRoot()->maxBound[2]},
-        {state.sds->getTree().getRoot()->minBound[0], state.sds->getTree().getRoot()->maxBound[1], state.sds->getTree().getRoot()->maxBound[2]}
+        {bbox.min()[0], bbox.min()[1], bbox.min()[2]}, // 0
+        {bbox.max()[0], bbox.min()[1], bbox.min()[2]}, // 1
+        {bbox.max()[0], bbox.max()[1], bbox.min()[2]}, // 2
+        {bbox.min()[0], bbox.max()[1], bbox.min()[2]}, // 3
+        {bbox.min()[0], bbox.min()[1], bbox.max()[2]}, // 4
+        {bbox.max()[0], bbox.min()[1], bbox.max()[2]}, // 5
+        {bbox.max()[0], bbox.max()[1], bbox.max()[2]}, // 6
+        {bbox.min()[0], bbox.max()[1], bbox.max()[2]}  // 7
     };
 
     std::vector<std::array<size_t, 2>> bboxEdges = {
@@ -382,9 +285,9 @@ void registerBoundingBox(AppState& state) {
     };
 
     // Visualize bounding box
-    auto* bbox = polyscope::registerCurveNetwork("Bounding Box", state.bboxVertices, bboxEdges);
-    bbox->setRadius(0.001);
-    bbox->setColor({0.4, 0.4, 0.4});
+    auto* bboxCN = polyscope::registerCurveNetwork("Bounding Box", state.bboxVertices, bboxEdges);
+    bboxCN->setRadius(0.001);
+    bboxCN->setColor({0.4, 0.4, 0.4});
 }
 
 } // namespace gui
