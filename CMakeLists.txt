@@ -81,6 +81,22 @@ FetchContent_Declare(
   GIT_PROGRESS TRUE)
 FetchContent_MakeAvailable(polyscope)
 
+# Disable PMP's visualization, tests, and examples to prevent dependency collisions
+set(PMP_BUILD_VIEWERS OFF CACHE INTERNAL "")
+set(PMP_BUILD_VIS OFF CACHE INTERNAL "") # For compatibility with older PMP commits
+set(PMP_BUILD_APPS OFF CACHE INTERNAL "")
+set(PMP_BUILD_EXAMPLES OFF CACHE INTERNAL "")
+set(PMP_BUILD_TESTS OFF CACHE INTERNAL "")
+set(PMP_BUILD_DOCS OFF CACHE INTERNAL "")
+
+FetchContent_Declare(
+  pmp
+  GIT_REPOSITORY https://github.com/pmp-library/pmp-library.git
+  GIT_TAG 3.0.0
+  GIT_SHALLOW TRUE
+  GIT_PROGRESS TRUE)
+FetchContent_MakeAvailable(pmp)
+
 # Create an executable
 add_executable(project src/main.cpp src/kdTree.cpp src/io.cpp src/gui.cpp)
 
@@ -89,6 +105,7 @@ target_include_directories(project PRIVATE include)
 target_include_directories(project PRIVATE src)
 target_include_directories(project PRIVATE "${polyscope_SOURCE_DIR}/deps/args")
 target_include_directories(project PRIVATE "${polyscope_SOURCE_DIR}/deps/json/include")
+target_include_directories(project PRIVATE "${pmp_SOURCE_DIR}/src")
 
 # Link to dependencies
-target_link_libraries(project polyscope portable_file_dialogs)
+target_link_libraries(project PRIVATE polyscope portable_file_dialogs pmp)

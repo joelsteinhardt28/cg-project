@@ -11,9 +11,45 @@
 #include "portable-file-dialogs.h"
 #include "imgui.h"
 
+#include <pmp/surface_mesh.h>
+#include <pmp/io/io.h>
+
 #include "io.hpp"
 
 namespace gui {
+
+polyscope::SurfaceMesh* registerPmpMesh(const std::string& name, const pmp::SurfaceMesh& mesh) {
+    std::cout << "[INFO] Registering PMP mesh with Polyscope: " << name << std::endl;
+    std::vector<Point> vertices;
+    vertices.reserve(mesh.n_vertices());
+    for (auto v : mesh.vertices()) {
+        auto p = mesh.position(v);
+        vertices.push_back({p[0], p[1], p[2]});
+    }
+
+    std::vector<Face> faces;
+    faces.reserve(mesh.n_faces());
+    for (auto f : mesh.faces()) {
+        std::vector<size_t> face_indices;
+        for (auto v : mesh.vertices(f)) {
+            face_indices.push_back(v.idx());
+        }
+        faces.push_back(face_indices);
+    }
+
+    return polyscope::registerSurfaceMesh(name, vertices, faces);
+}
+
+polyscope::PointCloud* registerPmpPointCloud(const std::string& name, const pmp::SurfaceMesh& mesh) {
+    std::cout << "[INFO] Registering PMP point cloud with Polyscope: " << name << std::endl;
+    std::vector<Point> vertices;
+    vertices.reserve(mesh.n_vertices());
+    for (auto v : mesh.vertices()) {
+        auto p = mesh.position(v);
+        vertices.push_back({p[0], p[1], p[2]});
+    }
+    return polyscope::registerPointCloud(name, vertices);
+}
 
 void generate_random_cutting_plane(AppState& state) {
     polyscope::removeAllSlicePlanes();
@@ -173,13 +209,26 @@ void render(AppState& state) {
                 state.selectedOffFileIdx = i;
                 std::filesystem::path selectedPath = std::filesystem::path(state.targetDir) / state.offFiles[i];
                 
+                // std::vector<Point> points;
+                // std::vector<Face> faces;
+                // readOff(selectedPath.string(), points, faces);
+
+                pmp::SurfaceMesh mesh;
+                std::cout << "[INFO] Reading mesh from: " << selectedPath << std::endl;
+                pmp::read(mesh, selectedPath);
+                std::cout << "[INFO] Mesh loaded: " << mesh.n_vertices() << " vertices, " << mesh.n_faces() << " faces." << std::endl;
+
                 std::vector<Point> points;
-                std::vector<Face> faces;
-                readOff(selectedPath.string(), points, faces);
+                points.reserve(mesh.n_vertices());
+                for (auto v : mesh.vertices()) {
+                    auto p = mesh.position(v);
+                    points.push_back({p[0], p[1], p[2]});
+                }
 
                 // Register mesh and pc and build kd-Tree
-                state.sc = polyscope::registerSurfaceMesh("Mesh", points, faces);
-                state.pc = polyscope::registerPointCloud("Points", points);
+                state.sc = registerPmpMesh("Mesh", mesh);
+                state.pc = registerPmpPointCloud("Points", mesh);
+                
                 state.sds = std::make_unique<SpatialDataStructure>(points, state.maxLeafSize);
 
                 // Calculate bounding box vertices
@@ -187,26 +236,6 @@ void render(AppState& state) {
 
                 // Point cloud cosmetics
                 state.pc->setEnabled(false);
-
-                // Extract and visualize splitting planes of the kd-Tree
-                std::vector<Point> planeVertices;
-                std::vector<Face> planeFaces;
-                state.sds->getTree().getSplittingPlanes(state.sds->getTree().getRoot(), 0, planeVertices, planeFaces);
-
-                if (!planeVertices.empty()) {
-                    auto* planesMesh = polyscope::registerSurfaceMesh("KD-Tree Splitting Planes", planeVertices, planeFaces);
-                    
-                    // Splitting plane cosmetics
-                    planesMesh->setSurfaceColor({0.96f, 0.36f, 0.3f});
-                    planesMesh->setTransparency(0.7f);
-                    planesMesh->setEdgeColor({0.0f, 0.0f, 0.0f});
-                    planesMesh->setEdgeWidth(2.0f);
-                    planesMesh->setEnabled(false);
-                }
-
-                // Delete old query results, if they exist
-                polyscope::removePointCloud("Query Result");
-                polyscope::removePointCloud("Query Point");
 
                 // Reset camera to fit the new mesh
                 polyscope::view::resetCameraToHomeView();
