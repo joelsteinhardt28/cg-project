@@ -1,0 +1,26 @@
+# Build directory
+/build/
+
+# IDE files
+.vscode/
+.idea/
+.vs/
+*.swp
+*.swo
+
+# Polyscope and ImGui settings
+*.ini
+.polyscope.ini
+
+# Compilation database
+compile_commands.json
+
+# Object files and libraries
+*.o
+*.a
+*.so
+*.out
+
+# OS files
+.DS_Store
+Thumbs.db
