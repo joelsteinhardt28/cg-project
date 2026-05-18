@@ -98,7 +98,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(pmp)
 
 # Create an executable
-add_executable(project src/main.cpp src/kdTree.cpp src/io.cpp src/gui.cpp)
+add_executable(project src/main.cpp src/io.cpp src/gui.cpp)
 
 # Add header-only dependencies
 target_include_directories(project PRIVATE include)
