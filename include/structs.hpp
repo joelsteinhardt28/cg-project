@@ -18,7 +18,6 @@ using Point = pmp::vec3;
 using Face = std::vector<size_t>;
 using Normal = pmp::vec3;
 
-inline constexpr int DEFAULT_MAX_LEAF_SIZE = 5;
 const float EPSILON = 1e-6f;
 
 
