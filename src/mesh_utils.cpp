@@ -16,8 +16,14 @@
 
 namespace mesh_utils {
 
-polyscope::SurfaceMesh* registerPmpMesh(const std::string& name, const pmp::SurfaceMesh& mesh) {
-    std::cout << "[INFO] Registering PMP mesh with Polyscope: " << name << std::endl;
+// * HELPER FUNCTIONS * //
+
+/*
+ * Registers a PMP surface mesh in Polyscope using the vertex positions and face indices of the given PMP mesh. The surface
+ * mesh is registered with the name `name`.
+ */
+polyscope::SurfaceMesh* register_pmp_mesh(const std::string& name, const pmp::SurfaceMesh& mesh) {
+    print::info("Registering PMP mesh with Polyscope: " + name);
     std::vector<Point> vertices;
     vertices.reserve(mesh.n_vertices());
     for (auto v : mesh.vertices()) {
@@ -38,8 +44,12 @@ polyscope::SurfaceMesh* registerPmpMesh(const std::string& name, const pmp::Surf
     return polyscope::registerSurfaceMesh(name, vertices, faces);
 }
 
-polyscope::PointCloud* registerPmpPointCloud(const std::string& name, const pmp::SurfaceMesh& mesh) {
-    std::cout << "[INFO] Registering PMP point cloud with Polyscope: " << name << std::endl;
+/*
+ * Registers a PMP point cloud in Polyscope using the vertex positions of the given PMP mesh. The point cloud is registered
+ * with the name `name`.
+ */
+polyscope::PointCloud* register_pmp_pc(const std::string& name, const pmp::SurfaceMesh& mesh) {
+    print::info("Registering PMP point cloud with Polyscope: " + name);
     std::vector<Point> vertices;
     vertices.reserve(mesh.n_vertices());
     for (auto v : mesh.vertices()) {
@@ -49,7 +59,10 @@ polyscope::PointCloud* registerPmpPointCloud(const std::string& name, const pmp:
     return polyscope::registerPointCloud(name, vertices);
 }
 
-void registerBoundingBox(AppState& state) {
+/*
+ * Registers or updates the bounding box and its visualization for `state.mesh`.
+ */
+void register_bbox(AppState& state) {
     if (!state.meshLoaded) return;
 
     pmp::BoundingBox bbox = pmp::bounds(state.mesh);
@@ -72,12 +85,17 @@ void registerBoundingBox(AppState& state) {
     };
 
     // Visualize bounding box
-    auto* bboxCN = polyscope::registerCurveNetwork("Bounding Box", state.bboxVertices, bboxEdges);
-    bboxCN->setRadius(0.001);
-    bboxCN->setColor({0.4, 0.4, 0.4});
+    auto* bboxCN = polyscope::registerCurveNetwork(std::string(constants::polyNames::bbox), state.bboxVertices, bboxEdges);
+    bboxCN->setRadius(constants::otherVisuals::bboxRadius);
+    bboxCN->setColor(constants::colors::bbox);
 }
 
-void generate_random_bbox_plane(AppState& state) {
+
+/*
+ * Visualizes the given plane as a quad that fills the bbox of the mesh. There can only be one cutting plane
+ * visualized at a time. It is registered as `constants::polyNames::cutPlane` in Polyscope.
+ */
+void visualize_cut_plane(AppState& state, const Plane& plane) {
     if (state.bboxVertices.empty()) return;
 
     // Calculate bbox limits
@@ -90,24 +108,13 @@ void generate_random_bbox_plane(AppState& state) {
         }
     }
 
-    // Setup random number generation
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> distX(minP[0], maxP[0]);
-    std::uniform_real_distribution<float> distY(minP[1], maxP[1]);
-    std::uniform_real_distribution<float> distZ(minP[2], maxP[2]);
-    std::uniform_real_distribution<float> distUnit(-1.0f, 1.0f);
-
-    // Sample center
-    glm::vec3 center(distX(gen), distY(gen), distZ(gen));
-    glm::vec3 normal{distUnit(gen), distUnit(gen), distUnit(gen)};
-    if (glm::length(normal) < 1e-5) normal = {0.0f, 0.0f, 1.0f}; // fallback normal
-    normal = glm::normalize(normal);
-
-    // Store active cut plane
-    state.activeCutPlane.normal = pmp::Point(normal.x, normal.y, normal.z);
-    state.activeCutPlane.d = -pmp::dot(state.activeCutPlane.normal, pmp::Point(center.x, center.y, center.z));
-    state.hasActiveCutPlane = true;
+    glm::vec3 normal(plane.normal[0], plane.normal[1], plane.normal[2]);
+    
+    // Find a center point for the quad. We project the center of the BBox onto the plane.
+    Point bboxCenter = (minP + maxP) * 0.5f;
+    float dist = plane.distance(bboxCenter);
+    Point projectedCenter = bboxCenter - dist * plane.normal;
+    glm::vec3 center(projectedCenter[0], projectedCenter[1], projectedCenter[2]);
 
     glm::vec3 helper = (std::abs(normal.y) < 0.99) ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
     glm::vec3 tangent = glm::normalize(glm::cross(normal, helper));
@@ -166,51 +173,142 @@ void generate_random_bbox_plane(AppState& state) {
     for(size_t i = 0; i < polygon.size(); ++i) face.push_back(i);
     faces.push_back(face);
 
-    auto* planeMesh = polyscope::registerSurfaceMesh("Clipped Random Plane", polygon, faces);
-    planeMesh->setSurfaceColor({0.8f, 0.1f, 0.2f});
-    planeMesh->setTransparency(0.6f);
+    auto* planeMesh = polyscope::registerSurfaceMesh(std::string(constants::polyNames::cutPlane), polygon, faces);
+    planeMesh->setSurfaceColor(constants::colors::cutPlane);
+    planeMesh->setTransparency(constants::transparencies::cutPlane);
 }
 
+
+/*
+ * Generates a random plane that intersects the bounding box of `state.mesh` and visualizes it. The plane is stored in
+ * `state.activeCutPlane` and can be used for cutting the mesh.
+ */
+void generate_random_bbox_plane(AppState& state) {
+    if (state.bboxVertices.empty()) return;
+
+    // Calculate bbox limits
+    Point minP = state.bboxVertices[0];
+    Point maxP = state.bboxVertices[0];
+    for (const auto& v : state.bboxVertices) {
+        for (int i = 0; i < 3; i++) {
+            minP[i] = std::min(minP[i], v[i]);
+            maxP[i] = std::max(maxP[i], v[i]);
+        }
+    }
+
+    // Setup random number generation
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<float> distX(minP[0], maxP[0]);
+    std::uniform_real_distribution<float> distY(minP[1], maxP[1]);
+    std::uniform_real_distribution<float> distZ(minP[2], maxP[2]);
+    std::uniform_real_distribution<float> distUnit(-1.0f, 1.0f);
+
+    // Sample center
+    glm::vec3 center(distX(gen), distY(gen), distZ(gen));
+    glm::vec3 normal{distUnit(gen), distUnit(gen), distUnit(gen)};
+    if (glm::length(normal) < 1e-5) normal = {0.0f, 0.0f, 1.0f}; // fallback normal
+    normal = glm::normalize(normal);
+
+    // Store active cut plane
+    state.activeCutPlane.normal = pmp::Point(normal.x, normal.y, normal.z);
+    state.activeCutPlane.d = -pmp::dot(state.activeCutPlane.normal, pmp::Point(center.x, center.y, center.z));
+    state.hasActiveCutPlane = true;
+
+    visualize_cut_plane(state, state.activeCutPlane);
+}
+
+
+// * IMPLEMENTATION OF MESH-PLANE CUTTING * //
+
+/*
+ * Find an edge that crosses the given plane.
+ */
 pmp::Halfedge edge_descent(pmp::SurfaceMesh& mesh, const Plane& plane) {
     if (mesh.is_empty()) return pmp::Halfedge();
 
-    pmp::Vertex current_v = *mesh.vertices_begin();
-    float current_dist = plane.distance(mesh.position(current_v));
+    // Lambda helper to check if a vertex is inside or on the plane
+    auto is_inside_or_on = [&](pmp::Vertex v) {
+        return plane.distance(mesh.position(v)) <= EPSILON;
+    };
 
-    while(true) {
+    pmp::Vertex current_v = *mesh.vertices_begin();  // start from an arbitrary vertex
+    float current_dist = plane.distance(mesh.position(current_v));
+    bool current_state = is_inside_or_on(current_v);
+
+    // Keep track of visited vertices to prevent infinite loops
+    std::vector<bool> visited(mesh.n_vertices(), false);
+
+    while(current_v.is_valid()) {
+        visited[current_v.idx()] = true;
+
         pmp::Vertex bestNeighbor;
         float min_abs_dist = std::abs(current_dist);
         bool foundCloser = false;
 
         for (auto he : mesh.halfedges(current_v)) {
             pmp::Vertex neighbor = mesh.to_vertex(he);
-            float neighbor_dist = plane.distance(mesh.position(neighbor));
 
-            if ((current_dist > EPSILON && neighbor_dist < -EPSILON) ||
-                (current_dist < -EPSILON && neighbor_dist > EPSILON)) {
-                return he;
+            if (current_state != is_inside_or_on(neighbor)) {
+                return he; // Found edge crossing the plane
             }
 
-            if (std::abs(neighbor_dist) < min_abs_dist) {
-                min_abs_dist = std::abs(neighbor_dist);
-                bestNeighbor = neighbor;
-                foundCloser = true;
+            // Look for direction which brings us closer to the plane
+            if (!visited[neighbor.idx()]) {
+                float neighbor_dist = plane.distance(mesh.position(neighbor));
+                if (std::abs(neighbor_dist) < min_abs_dist) {
+                    min_abs_dist = std::abs(neighbor_dist);
+                    bestNeighbor = neighbor;
+                    foundCloser = true;
+                }
             }
         }
 
-        if (!foundCloser) return pmp::Halfedge();
+        // No vertex brings us closer to the plane, so we are at a local minimum
+        if (!foundCloser) {
+            print::warning("Edge descent hit a local minimum.");
+            return pmp::Halfedge();
+        }
 
         current_v = bestNeighbor;
         current_dist = plane.distance(mesh.position(current_v));
+        current_state = is_inside_or_on(current_v);
     }
+
+    return pmp::Halfedge(); // No crossing edge found
 }
 
-void cut_at_plane(AppState& state, const Plane& plane) {
-    if (!state.meshLoaded || state.mesh.is_empty()) return;
+/*
+ * Perform a cut of the mesh at the given plane. The mesh is required to be convex.
+ * The mesh must be loaded in `state.mesh` and the Polyscope visualization will be updated after the cut.
+ */
+void cut_at_plane(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane) {
+    print::debug("Cut at plane");
+    if (mesh.is_empty()) return;
 
-    pmp::Halfedge start_he = edge_descent(state.mesh, plane);
+    visualize_cut_plane(state, plane);
+
+    // Find a edge that crosses the cutting plane to start marching
+    pmp::Halfedge start_he = edge_descent(mesh, plane);
+
     if (!start_he.is_valid()) {
-        std::cout << "[INFO] No intersection found with the plane." << std::endl;
+        print::debug("Edge descent failed to find a crossing edge, falling back to linear search.");
+        for (auto e : mesh.edges()) {
+            pmp::Halfedge he = mesh.halfedge(e, 0);
+            pmp::Point p0 = mesh.position(mesh.from_vertex(he));
+            pmp::Point p1 = mesh.position(mesh.to_vertex(he));
+            float d0 = plane.distance(p0);
+            float d1 = plane.distance(p1);
+
+            if ((d0 > EPSILON && d1 < -EPSILON) || (d0 < -EPSILON && d1 > EPSILON)) {
+                start_he = he;
+                break;
+            }
+        }
+    }
+
+    if (!start_he.is_valid()) {
+        print::info("No intersection found with the plane.");
         return;
     }
 
@@ -218,80 +316,280 @@ void cut_at_plane(AppState& state, const Plane& plane) {
     std::vector<pmp::Face> crossingFaces;
     pmp::Halfedge current_he = start_he;
 
+    // March around the intersection loop, recording crossing edges and faces
     do {
-        pmp::Face current_face = state.mesh.face(current_he);
-        crossingEdges.push_back(state.mesh.edge(current_he));
+        print::debug("Current halfedge: " + std::to_string(current_he.idx()));
+        pmp::Face current_face = mesh.face(current_he);
+        crossingEdges.push_back(mesh.edge(current_he));
         crossingFaces.push_back(current_face);
 
         pmp::Halfedge next_he;
-        for (auto he : state.mesh.halfedges(current_face)) {
-            if (state.mesh.edge(he) == state.mesh.edge(current_he)) continue;
+        for (auto he : mesh.halfedges(current_face)) {
+            if (mesh.edge(he) == mesh.edge(current_he)) continue;  // same edge
 
-            pmp::Point p0 = state.mesh.position(state.mesh.from_vertex(he));
-            pmp::Point p1 = state.mesh.position(state.mesh.to_vertex(he));
+            pmp::Point p0 = mesh.position(mesh.from_vertex(he));
+            pmp::Point p1 = mesh.position(mesh.to_vertex(he));
             float d0 = plane.distance(p0);
             float d1 = plane.distance(p1);
 
+            // Check for sign change across the edge (indicating a crossing)
             if ((d0 > EPSILON && d1 < -EPSILON) || (d0 < -EPSILON && d1 > EPSILON)) {
+                next_he = he;
+                break;
+            }
+            // ! What if the plane passes exactly through a vertex (or within EPSILON)?
+        }
+
+        if (!next_he.is_valid()) {
+            print::error("Marching failed to find next edge.");
+            return;
+        }
+
+        current_he = mesh.opposite_halfedge(next_he);
+    } while (mesh.edge(current_he) != mesh.edge(start_he));
+
+    // For each crossing edge, split it at the intersection point and keep track of the new vertex
+    print::debug("Crossing edges: " + std::to_string(crossingEdges.size()));
+    std::vector<pmp::Vertex> newVertices;
+    for (const auto& e : crossingEdges) {
+        pmp::Halfedge he = mesh.halfedge(e, 0);
+        pmp::Point p0 = mesh.position(mesh.from_vertex(he));
+        pmp::Point p1 = mesh.position(mesh.to_vertex(he));
+        float d0 = plane.distance(p0);
+        float d1 = plane.distance(p1);
+        float t = d0 / (d0 - d1);
+        pmp::Point newPos = p0 + t * (p1 - p0);  // lerp to find intersection point
+
+        pmp::Halfedge new_he = mesh.split(e, newPos);
+        pmp::Vertex new_v = mesh.to_vertex(new_he);
+        newVertices.push_back(new_v);
+    }
+
+    // Connect the new vertices in a loop to form the cut edge
+    print::debug("Connecting new vertices");
+    for (size_t i = 0; i < crossingFaces.size(); ++i) {
+        pmp::Face f = crossingFaces[i];
+        pmp::Vertex v1 = newVertices[i];
+        pmp::Vertex v2 = newVertices[(i + 1) % newVertices.size()];
+
+        // pmp::Halfedge he0, he1;
+        // for (auto he : mesh.halfedges(f)) {
+        //     if (mesh.to_vertex(he) == v1) he0 = he;
+        //     if (mesh.to_vertex(he) == v2) he1 = he;
+        // }
+
+        // if (he0.is_valid() && he1.is_valid()) {
+        //     mesh.insert_edge(he0, he1);
+        // }
+
+        // ! Gemini Fix
+        pmp::Halfedge first_he, second_he;
+        for (auto he : mesh.halfedges(f)) {
+            if (mesh.to_vertex(he) == v1) {
+                if (!first_he.is_valid()) {
+                    first_he = he;
+                } else {
+                    second_he = he;
+                    break;
+                }
+            } 
+        }
+
+        if (first_he.is_valid() && second_he.is_valid()) {
+            mesh.insert_edge(first_he, second_he);
+        }
+    }
+
+    // ! Bug somewhere here causes freeze
+    print::debug("Deleting vertices on positive side of plane");
+    std::vector<pmp::Vertex> toDelete;
+    for (auto v : mesh.vertices()) {
+        if (plane.distance(mesh.position(v)) > EPSILON) {
+            toDelete.push_back(v);
+        }
+    }
+    for (auto v : toDelete) {
+        mesh.delete_vertex(v);
+    }
+    mesh.garbage_collection();
+
+    print::debug("Filling cut hole");
+    std::vector<pmp::Vertex> newFaceVertices;
+    pmp::Halfedge boundary_start;
+    for (auto he : mesh.halfedges()) {
+        if (mesh.is_boundary(he)) {
+            boundary_start = he;
+            break;
+        }
+    }
+
+    // If we have a valid boundary, fill the hole by creating a new face with the vertices along the boundary loop
+    if (boundary_start.is_valid()) {
+        pmp::Halfedge current_he = boundary_start;
+        do {
+            newFaceVertices.push_back(mesh.to_vertex(current_he));
+            current_he = mesh.next_halfedge(current_he);
+        } while (current_he != boundary_start);
+
+        try {
+            pmp::Face new_face = mesh.add_face(newFaceVertices);
+            pmp::triangulate(mesh, new_face);
+        } catch (const pmp::TopologyException& e) {
+            std::reverse(newFaceVertices.begin(), newFaceVertices.end());
+            try {
+                pmp::Face new_face = mesh.add_face(newFaceVertices);
+                pmp::triangulate(mesh, new_face);
+            } catch (const pmp::TopologyException& e) {
+                print::error("Failed to fill cut hole: " + std::string(e.what()));
+            }
+        }
+    }
+
+    // ! AI suggested: NEW FIX: Ensure the entire mesh consists strictly of triangles.  
+    print::debug("Triangulating entire mesh");
+    pmp::triangulate(mesh);
+}
+
+
+/**
+ * Cuts the mesh at the given plane, discarding the positive half-space. This algorithm classifies 
+ * every vertex of the mesh with respect to its position relative to the plane.
+ */
+void cut_at_plane_linear_search(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane) {
+    print::debug("Perform mesh-plane cutting ...");
+
+    if (mesh.is_empty()) return;
+
+    visualize_cut_plane(state, plane);
+
+    // * TOPOLOGICAL CLASSIFICATION
+    // Classify each vertex with respect to the plane using the signed distance.
+    // Keep vertices that are in the negative half-space.
+    std::vector<bool> keep(mesh.vertices_size(), false);
+    for (auto v : mesh.vertices()) {
+        keep[v.idx()] = plane.distance(mesh.position(v)) <= EPSILON; 
+    }
+
+    // * SEARCH FOR STARTING EDGE
+    // Find a starting halfedge for marching. Use Edge Descent bu fall back to Linear 
+    // Search if Edge Descent fails. A starting edge is an edge crossing the plane.
+    pmp::Halfedge start_he;
+    start_he = edge_descent(mesh, plane);
+
+    if (!start_he.is_valid()) {
+        print::debug("Edge descent failed to find a crossing edge, falling back to linear search.");
+        for (auto e : mesh.edges()) {
+            pmp::Halfedge he = mesh.halfedge(e, 0);
+            if (keep[mesh.from_vertex(he).idx()] != keep[mesh.to_vertex(he).idx()]) {
+                start_he = he;
+                break;
+            }
+        }
+    }
+
+    if (!start_he.is_valid()) {
+        print::warning("No intersection found with the plane.");
+        return;
+    }
+
+    // * MARCHING
+    // Walk along the intersection using topological classification and record
+    // crossing edges and faces until we return to the starting edge.
+    std::vector<pmp::Edge> crossingEdges;
+    std::vector<pmp::Face> crossingFaces;
+    pmp::Halfedge current_he = start_he;
+
+    do {
+        // current_he = start_he, so we know that it crosses the plane
+        pmp::Face current_face = mesh.face(current_he);
+        crossingEdges.push_back(mesh.edge(current_he));
+        crossingFaces.push_back(current_face);
+
+        pmp::Halfedge next_he;
+        for (auto he : mesh.halfedges(current_face)) {
+            if (mesh.edge(he) == mesh.edge(current_he)) continue;  
+
+            pmp::Vertex v0 = mesh.from_vertex(he);
+            pmp::Vertex v1 = mesh.to_vertex(he);
+
+            if (keep[v0.idx()] != keep[v1.idx()]) {
                 next_he = he;
                 break;
             }
         }
 
         if (!next_he.is_valid()) {
-            std::cerr << "[ERROR] Marching failed to find next edge." << std::endl;
+            print::warning("Marching failed to find next edge.");
             return;
         }
 
-        current_he = state.mesh.opposite_halfedge(next_he);
-    } while (state.mesh.edge(current_he) != state.mesh.edge(start_he));
+        current_he = mesh.opposite_halfedge(next_he);
+    } while (mesh.edge(current_he) != mesh.edge(start_he));
 
+    // * SPLIT CROSSING EDGES
+    // For each crossing edge, split it at the intersection point and keep track of the new vertex.
     std::vector<pmp::Vertex> newVertices;
     for (const auto& e : crossingEdges) {
-        pmp::Halfedge he = state.mesh.halfedge(e, 0);
-        pmp::Point p0 = state.mesh.position(state.mesh.from_vertex(he));
-        pmp::Point p1 = state.mesh.position(state.mesh.to_vertex(he));
+        pmp::Halfedge he = mesh.halfedge(e, 0);
+        pmp::Point p0 = mesh.position(mesh.from_vertex(he));
+        pmp::Point p1 = mesh.position(mesh.to_vertex(he));
         float d0 = plane.distance(p0);
         float d1 = plane.distance(p1);
+        
         float t = d0 / (d0 - d1);
-        pmp::Point newPos = p0 + t * (p1 - p0);
-
-        pmp::Halfedge new_he = state.mesh.split(e, newPos);
-        pmp::Vertex new_v = state.mesh.to_vertex(new_he);
-        newVertices.push_back(new_v);
+        
+        // Clamp t to prevent zero-length edges (never cut exactly at a vertex)
+        t = std::max(0.001f, std::min(0.999f, t)); 
+        
+        pmp::Point newPos = p0 + t * (p1 - p0); 
+        pmp::Halfedge new_he = mesh.split(e, newPos);
+        newVertices.push_back(mesh.to_vertex(new_he));
     }
 
+    // * SPLIT CROSSING FACES 
+    // Connect the new vertices in a loop to form the cut edge.
     for (size_t i = 0; i < crossingFaces.size(); ++i) {
-        pmp::Face f = crossingFaces[i];
+        pmp::Face face = crossingFaces[i];
         pmp::Vertex v1 = newVertices[i];
         pmp::Vertex v2 = newVertices[(i + 1) % newVertices.size()];
 
-        pmp::Halfedge he0, he1;
-        for (auto he : state.mesh.halfedges(f)) {
-            if (state.mesh.to_vertex(he) == v1) he0 = he;
-            if (state.mesh.to_vertex(he) == v2) he1 = he;
+        pmp::Halfedge first_he, second_he;
+        for (auto he : mesh.halfedges(face)) {
+            if (mesh.to_vertex(he) == v1) {  // ! removed mesh.to_vertex(he) == v2
+                if (!first_he.is_valid()) {
+                    first_he = he;
+                } else {
+                    second_he = he;
+                    break;
+                }
+            } 
         }
 
-        if (he0.is_valid() && he1.is_valid()) {
-            state.mesh.insert_edge(he0, he1);
+        if (first_he.is_valid() && second_he.is_valid()) {
+            mesh.insert_edge(first_he, second_he);
+        } else {
+            print::error("Failed to find halfedges for face splitting.");
         }
     }
 
+    // * DELETE POSITIVE VERTICES
     std::vector<pmp::Vertex> toDelete;
-    for (auto v : state.mesh.vertices()) {
-        if (plane.distance(state.mesh.position(v)) > EPSILON) {
+    for (auto v : mesh.vertices()) {
+        // Only evaluate original vertices using the keep array bounds
+        if (v.idx() < keep.size() && !keep[v.idx()]) {
             toDelete.push_back(v);
         }
     }
     for (auto v : toDelete) {
-        state.mesh.delete_vertex(v);
+        mesh.delete_vertex(v);
     }
-    state.mesh.garbage_collection();
+    mesh.garbage_collection();
 
+    // * FILL HOLE & TRIANGULATE
     std::vector<pmp::Vertex> newFaceVertices;
     pmp::Halfedge boundary_start;
-    for (auto he : state.mesh.halfedges()) {
-        if (state.mesh.is_boundary(he)) {
+    for (auto he : mesh.halfedges()) {
+        if (mesh.is_boundary(he)) {
             boundary_start = he;
             break;
         }
@@ -300,25 +598,66 @@ void cut_at_plane(AppState& state, const Plane& plane) {
     if (boundary_start.is_valid()) {
         pmp::Halfedge current_he = boundary_start;
         do {
-            newFaceVertices.push_back(state.mesh.to_vertex(current_he));
-            current_he = state.mesh.next_halfedge(current_he);
+            newFaceVertices.push_back(mesh.to_vertex(current_he));
+            current_he = mesh.next_halfedge(current_he);
         } while (current_he != boundary_start);
 
         try {
-            state.mesh.add_face(newFaceVertices);
+            pmp::Face new_face = mesh.add_face(newFaceVertices);
+            pmp::triangulate(mesh, new_face);
         } catch (const pmp::TopologyException& e) {
             std::reverse(newFaceVertices.begin(), newFaceVertices.end());
             try {
-                state.mesh.add_face(newFaceVertices);
+                pmp::Face new_face = mesh.add_face(newFaceVertices);
+                pmp::triangulate(mesh, new_face);
             } catch (const pmp::TopologyException& e) {
-                std::cerr << "[ERROR] Failed to fill cut hole: " << e.what() << std::endl;
+                print::warning("Failed to fill cut hole: " + std::string(e.what()));
             }
         }
     }
 
-    polyscope::removeSurfaceMesh("Mesh");
-    state.sc = registerPmpMesh("Mesh", state.mesh);
-    registerBoundingBox(state);
+    pmp::triangulate(mesh);
+}
+
+
+/**
+ * Given a mesh, returns a boolean vector indicating which faces are concave.
+ * The function evaluates the signed volume formed by the current face and its opposite face across each edge.
+ * If the volume is positive, it indicates that the opposite face is above the plane of the current face, 
+ * suggesting a concave configuation.
+ */
+std::vector<bool> identify_concave_faces(const pmp::SurfaceMesh& mesh) {
+    std::vector<bool> isConcave(mesh.n_faces(), false);
+
+    for (auto e : mesh.edges()) {
+        if (mesh.is_boundary(e)) continue;
+
+        pmp::Halfedge he0 = mesh.halfedge(e, 0);
+        pmp::Halfedge he1 = mesh.halfedge(e, 1);
+
+        pmp::Vertex v0 = mesh.from_vertex(he0);
+        pmp::Vertex v1 = mesh.to_vertex(he0);
+        pmp::Vertex v2 = mesh.to_vertex(mesh.next_halfedge(he0));
+        pmp::Vertex v3 = mesh.to_vertex(mesh.next_halfedge(he1));
+
+        pmp::Point p0 = mesh.position(v0);
+        pmp::Point p1 = mesh.position(v1);
+        pmp::Point p2 = mesh.position(v2);
+        pmp::Point p3 = mesh.position(v3);
+
+        pmp::vec3 n_f0 = pmp::cross(p1 - p0, p2 - p0);
+        float det = pmp::dot(n_f0, p3 - p0);  // Scalar triple product (equivalent to 4x4 determinant with hom. coord.)
+
+        // If det > 0, the fourth vertex is above the plane of f0
+        if (det > EPSILON) {
+            pmp::Face f0 = mesh.face(he0);
+            pmp::Face f1 = mesh.face(he1);
+            isConcave[f0.idx()] = true;
+            isConcave[f1.idx()] = true;
+        }
+    }
+
+    return isConcave;
 }
 
 } // namespace mesh_utils

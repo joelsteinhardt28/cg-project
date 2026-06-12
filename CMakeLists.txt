@@ -98,7 +98,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(pmp)
 
 # Create an executable
-add_executable(project src/main.cpp src/io.cpp src/gui.cpp src/mesh_utils.cpp)
+add_executable(project src/main.cpp src/io.cpp src/gui.cpp src/mesh_utils.cpp src/kernel_gen.cpp src/toolbox.cpp)
 
 # Add header-only dependencies
 target_include_directories(project PRIVATE include)

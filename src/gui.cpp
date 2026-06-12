@@ -13,8 +13,23 @@
 
 #include "io.hpp"
 #include "mesh_utils.hpp"
+#include "kernel_gen.hpp"
+#include "toolbox.hpp"
 
 namespace gui {
+
+void reset(AppState& state) {
+    print::info("Resetting application state...");
+    polyscope::removeAllStructures();
+    state.mesh = pmp::SurfaceMesh();
+    state.meshLoaded = false;
+    state.oSMesh = nullptr;
+    state.pc = nullptr;
+    state.kSMesh = nullptr;
+    state.supportPlanes.clear();
+    state.isSteppingKernel = false;
+    state.currentPlaneIdx = 0;
+}
 
 // * Helper to scan the OFF file directory and populate the list in AppState of available files
 void refreshOffFileList(AppState& state) {
@@ -41,21 +56,23 @@ void render(AppState& state) {
         for (int i = 0; i < nFiles; i++) {
             const bool isSelected = (state.selectedOffFileIdx == i);
             if (ImGui::Selectable(state.offFiles[i].c_str(), isSelected)) {
+                reset(state);
                 state.selectedOffFileIdx = i;
                 std::filesystem::path selectedPath = std::filesystem::path(state.targetDir) / state.offFiles[i];
                 
                 try {
                     pmp::SurfaceMesh tempMesh;
-                    std::cout << "[INFO] Reading mesh from: " << selectedPath << std::endl;
+                    print::info("Reading mesh from: " + selectedPath.string());
                     pmp::read(tempMesh, selectedPath);
                     state.mesh = std::move(tempMesh);
-                    std::cout << "[INFO] Mesh loaded: " << state.mesh.n_vertices() << " vertices, " << state.mesh.n_faces() << " faces." << std::endl;
+                    print::info("Mesh loaded: " + std::to_string(state.mesh.n_vertices()) + " vertices, " + std::to_string(state.mesh.n_faces()) + " faces.");
 
-                    state.sc = mesh_utils::registerPmpMesh("Mesh", state.mesh);
-                    state.pc = mesh_utils::registerPmpPointCloud("Points", state.mesh);
+                    state.oSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::mesh), state.mesh);
+                    state.oSMesh->setSurfaceColor(constants::colors::mesh);
+                    state.pc = mesh_utils::register_pmp_pc(std::string(constants::polyNames::pc), state.mesh);
                     if (!state.mesh.is_empty()) state.meshLoaded = true;
 
-                    mesh_utils::registerBoundingBox(state);
+                    mesh_utils::register_bbox(state);
 
                     // Point cloud cosmetics
                     state.pc->setEnabled(false);
@@ -63,8 +80,7 @@ void render(AppState& state) {
                     // Reset camera to fit the new mesh
                     polyscope::view::resetCameraToHomeView();
                 } catch (const std::exception& e) {
-                    std::cerr << "[ERROR] Error while loading " << selectedPath << ": " << e.what() << std::endl;
-                    polyscope::error("Failed to load mesh: " + std::string(e.what()));
+                    print::error("Error while loading " + selectedPath.string() + ": " + std::string(e.what()));
                     state.selectedOffFileIdx = -1;
                     state.meshLoaded = false;
                 }
@@ -78,6 +94,15 @@ void render(AppState& state) {
 
 
     if (state.meshLoaded) {
+        if (ImGui::Button("Identify Concave Faces")) {
+            std::vector<bool> isConcave = mesh_utils::identify_concave_faces(state.mesh);
+            std::vector<double> scalarVal(state.mesh.n_faces());
+            for (size_t i = 0; i < isConcave.size(); ++i) {
+                scalarVal[i] = isConcave[i] ? 1.0 : 0.0;
+            }
+            state.oSMesh->addFaceScalarQuantity("isConcave", scalarVal)->setEnabled(true);
+        }
+
         if (ImGui::Button("Generate Random Cutting Plane")) {
             mesh_utils::generate_random_bbox_plane(state);
         }
@@ -85,9 +110,36 @@ void render(AppState& state) {
         if (state.hasActiveCutPlane) {
             ImGui::SameLine();
             if (ImGui::Button("Cut")) {
-                mesh_utils::cut_at_plane(state, state.activeCutPlane);
+                mesh_utils::cut_at_plane_linear_search(state, state.mesh, state.activeCutPlane);
                 polyscope::removeSurfaceMesh("Clipped Random Plane");
                 state.hasActiveCutPlane = false;
+            }
+        }
+
+        if (ImGui::Button("Generate Kernel")) {
+            generate_kernel(state);
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Debug Kernel Generation");
+
+        if (!state.isSteppingKernel) {
+            if (ImGui::Button("Start Kernel Stepping")) {
+                init_kernel_stepping(state);
+            }
+        } else {
+            ImGui::Text("Step: %d / %zu", state.currentPlaneIdx, state.supportPlanes.size());
+            if (ImGui::Button("Next Step")) {
+                step_kernel(state);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Finish Kernel")) {
+                while (state.isSteppingKernel) {
+                    step_kernel(state);
+                }
+            }
+            if (ImGui::Button("Cancel Stepping")) {
+                state.isSteppingKernel = false;
             }
         }
         
