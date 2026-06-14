@@ -35,6 +35,12 @@ struct Plane {
 };
 
 
+enum class CutAlgorithm {
+    Standard,
+    LinearSearch
+};
+
+
 // * Application state struct to hold shared data across the application
 struct AppState {
     polyscope::PointCloud* pc = nullptr;
@@ -49,6 +55,7 @@ struct AppState {
 
     Plane activeCutPlane;
     bool hasActiveCutPlane = false;
+    CutAlgorithm selectedCutAlgorithm = CutAlgorithm::Standard;
 
     // Kernel Stepping State
     bool isSteppingKernel = false;
@@ -58,4 +65,6 @@ struct AppState {
     std::string targetDir = "./off_files";
     std::vector<std::string> offFiles;
     int selectedOffFileIdx = -1;
+
+    bool updateVisuals = false;
 };

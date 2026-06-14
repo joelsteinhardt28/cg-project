@@ -6,6 +6,11 @@
 #include "structs.hpp"
 
 
+namespace globalSettings {
+    inline constexpr bool showDebugLogs = false;
+}
+
+
 namespace constants::colors {
     inline constexpr Color mesh = {0.7f, 0.7f, 0.7f};
     inline constexpr Color kernel = {0.1f, 0.5f, 0.9f};

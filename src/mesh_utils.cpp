@@ -23,7 +23,7 @@ namespace mesh_utils {
  * mesh is registered with the name `name`.
  */
 polyscope::SurfaceMesh* register_pmp_mesh(const std::string& name, const pmp::SurfaceMesh& mesh) {
-    print::info("Registering PMP mesh with Polyscope: " + name);
+    print::debug("Registering PMP mesh with Polyscope: " + name);
     std::vector<Point> vertices;
     vertices.reserve(mesh.n_vertices());
     for (auto v : mesh.vertices()) {
@@ -288,6 +288,11 @@ void cut_at_plane(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane) {
 
     visualize_cut_plane(state, plane);
 
+    // Lambda helper to discretize vertex states
+    auto is_kept = [&](pmp::Point p) {
+        return plane.distance(p) <= EPSILON;
+    };
+
     // Find a edge that crosses the cutting plane to start marching
     pmp::Halfedge start_he = edge_descent(mesh, plane);
 
@@ -297,10 +302,8 @@ void cut_at_plane(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane) {
             pmp::Halfedge he = mesh.halfedge(e, 0);
             pmp::Point p0 = mesh.position(mesh.from_vertex(he));
             pmp::Point p1 = mesh.position(mesh.to_vertex(he));
-            float d0 = plane.distance(p0);
-            float d1 = plane.distance(p1);
-
-            if ((d0 > EPSILON && d1 < -EPSILON) || (d0 < -EPSILON && d1 > EPSILON)) {
+            
+            if (is_kept(p0) != is_kept(p1)) {
                 start_he = he;
                 break;
             }
@@ -308,12 +311,11 @@ void cut_at_plane(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane) {
     }
 
     if (!start_he.is_valid()) {
-        print::info("No intersection found with the plane.");
+        print::debug("No intersection found with the plane.");
         return;
     }
 
     std::vector<pmp::Edge> crossingEdges;
-    std::vector<pmp::Face> crossingFaces;
     pmp::Halfedge current_he = start_he;
 
     // March around the intersection loop, recording crossing edges and faces
@@ -321,7 +323,6 @@ void cut_at_plane(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane) {
         print::debug("Current halfedge: " + std::to_string(current_he.idx()));
         pmp::Face current_face = mesh.face(current_he);
         crossingEdges.push_back(mesh.edge(current_he));
-        crossingFaces.push_back(current_face);
 
         pmp::Halfedge next_he;
         for (auto he : mesh.halfedges(current_face)) {
@@ -329,15 +330,11 @@ void cut_at_plane(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane) {
 
             pmp::Point p0 = mesh.position(mesh.from_vertex(he));
             pmp::Point p1 = mesh.position(mesh.to_vertex(he));
-            float d0 = plane.distance(p0);
-            float d1 = plane.distance(p1);
 
-            // Check for sign change across the edge (indicating a crossing)
-            if ((d0 > EPSILON && d1 < -EPSILON) || (d0 < -EPSILON && d1 > EPSILON)) {
+            if (is_kept(p0) != is_kept(p1)) {
                 next_he = he;
                 break;
             }
-            // ! What if the plane passes exactly through a vertex (or within EPSILON)?
         }
 
         if (!next_he.is_valid()) {
@@ -348,9 +345,10 @@ void cut_at_plane(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane) {
         current_he = mesh.opposite_halfedge(next_he);
     } while (mesh.edge(current_he) != mesh.edge(start_he));
 
-    // For each crossing edge, split it at the intersection point and keep track of the new vertex
+    size_t originalVerticesCount = mesh.vertices_size();
+
+    // For each crossing edge, split it at the intersection point
     print::debug("Crossing edges: " + std::to_string(crossingEdges.size()));
-    std::vector<pmp::Vertex> newVertices;
     for (const auto& e : crossingEdges) {
         pmp::Halfedge he = mesh.halfedge(e, 0);
         pmp::Point p0 = mesh.position(mesh.from_vertex(he));
@@ -358,54 +356,20 @@ void cut_at_plane(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane) {
         float d0 = plane.distance(p0);
         float d1 = plane.distance(p1);
         float t = d0 / (d0 - d1);
+
+        t = std::max(0.001f, std::min(0.999f, t));  // clamp t to avoid numerical issues at endpoints
+        
         pmp::Point newPos = p0 + t * (p1 - p0);  // lerp to find intersection point
-
-        pmp::Halfedge new_he = mesh.split(e, newPos);
-        pmp::Vertex new_v = mesh.to_vertex(new_he);
-        newVertices.push_back(new_v);
+        mesh.split(e, newPos);  // split edge and create new vertex at intersection
     }
 
-    // Connect the new vertices in a loop to form the cut edge
-    print::debug("Connecting new vertices");
-    for (size_t i = 0; i < crossingFaces.size(); ++i) {
-        pmp::Face f = crossingFaces[i];
-        pmp::Vertex v1 = newVertices[i];
-        pmp::Vertex v2 = newVertices[(i + 1) % newVertices.size()];
-
-        // pmp::Halfedge he0, he1;
-        // for (auto he : mesh.halfedges(f)) {
-        //     if (mesh.to_vertex(he) == v1) he0 = he;
-        //     if (mesh.to_vertex(he) == v2) he1 = he;
-        // }
-
-        // if (he0.is_valid() && he1.is_valid()) {
-        //     mesh.insert_edge(he0, he1);
-        // }
-
-        // ! Gemini Fix
-        pmp::Halfedge first_he, second_he;
-        for (auto he : mesh.halfedges(f)) {
-            if (mesh.to_vertex(he) == v1) {
-                if (!first_he.is_valid()) {
-                    first_he = he;
-                } else {
-                    second_he = he;
-                    break;
-                }
-            } 
-        }
-
-        if (first_he.is_valid() && second_he.is_valid()) {
-            mesh.insert_edge(first_he, second_he);
-        }
-    }
-
-    // ! Bug somewhere here causes freeze
     print::debug("Deleting vertices on positive side of plane");
     std::vector<pmp::Vertex> toDelete;
     for (auto v : mesh.vertices()) {
-        if (plane.distance(mesh.position(v)) > EPSILON) {
-            toDelete.push_back(v);
+        if (v.idx() < originalVerticesCount) {  // only evaluate original vertices for deletion
+            if (!is_kept(mesh.position(v))) {
+                toDelete.push_back(v);
+            }
         }
     }
     for (auto v : toDelete) {
@@ -546,31 +510,39 @@ void cut_at_plane_linear_search(AppState& state, pmp::SurfaceMesh& mesh, const P
         newVertices.push_back(mesh.to_vertex(new_he));
     }
 
-    // * SPLIT CROSSING FACES 
-    // Connect the new vertices in a loop to form the cut edge.
-    for (size_t i = 0; i < crossingFaces.size(); ++i) {
-        pmp::Face face = crossingFaces[i];
-        pmp::Vertex v1 = newVertices[i];
-        pmp::Vertex v2 = newVertices[(i + 1) % newVertices.size()];
+    // // * SPLIT CROSSING FACES 
+    // // Connect the new vertices in a loop to form the cut edge.
+    // print::debug("We have in total " + std::to_string(crossingFaces.size()) + " crossing faces to split.");
+    // for (size_t i = 0; i < crossingFaces.size(); ++i) {
+    //     print::debug("» Attempting to split face " + std::to_string(crossingFaces[i].idx()));
+    //     pmp::Face face = crossingFaces[i];
+    //     pmp::Vertex v1 = newVertices[i];
+    //     pmp::Vertex v2 = newVertices[(i + 1) % newVertices.size()];
 
-        pmp::Halfedge first_he, second_he;
-        for (auto he : mesh.halfedges(face)) {
-            if (mesh.to_vertex(he) == v1) {  // ! removed mesh.to_vertex(he) == v2
-                if (!first_he.is_valid()) {
-                    first_he = he;
-                } else {
-                    second_he = he;
-                    break;
-                }
-            } 
-        }
+    //     pmp::Halfedge first_he, second_he;
+    //     // for (auto he : mesh.halfedges(face)) {
+    //     //     if (mesh.to_vertex(he) == v1) {  // ! removed mesh.to_vertex(he) == v2
+    //     //         if (!first_he.is_valid()) {
+    //     //             first_he = he;
+    //     //         } else {
+    //     //             second_he = he;
+    //     //             break;
+    //     //         }
+    //     //     } 
+    //     // }
+    //     print::debug("Total halfedges in face " + std::to_string(face.idx()) + ": " + std::to_string(mesh.valence(face)));
+    //     for (auto he : mesh.halfedges(face)) {
+    //         if (mesh.from_vertex(he) == v1) first_he = he;
+    //         if (mesh.from_vertex(he) == v2) second_he = he;
+    //         print::debug("Checking halfedge " + std::to_string(he.idx()) + " with from_vertex " + std::to_string(mesh.from_vertex(he).idx()));
+    //     }
 
-        if (first_he.is_valid() && second_he.is_valid()) {
-            mesh.insert_edge(first_he, second_he);
-        } else {
-            print::error("Failed to find halfedges for face splitting.");
-        }
-    }
+    //     if (first_he.is_valid() && second_he.is_valid()) {
+    //         mesh.insert_edge(first_he, second_he);
+    //     } else {
+    //         print::error("Failed to find halfedges for face splitting.");
+    //     }
+    // }
 
     // * DELETE POSITIVE VERTICES
     std::vector<pmp::Vertex> toDelete;

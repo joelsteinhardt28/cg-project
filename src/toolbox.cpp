@@ -1,4 +1,5 @@
 #include "toolbox.hpp"
+#include "constants.hpp"
 
 namespace print {
     void info(const std::string& msg) {
@@ -10,7 +11,9 @@ namespace print {
     }
 
     void debug(const std::string& msg) {
-        std::cout << "\033[1;36m[DEBUG] \033[0;36m" << msg << "\033[0m" << std::endl;
+        if (globalSettings::showDebugLogs) {
+            std::cout << "\033[1;36m[DEBUG] \033[0;36m" << msg << "\033[0m" << std::endl;
+        }
     }
 
     void warning(const std::string& msg) {

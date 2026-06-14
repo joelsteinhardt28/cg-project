@@ -14,4 +14,4 @@
 pmp::SurfaceMesh construct_aabb_mesh(pmp::BoundingBox& bbox);
 void generate_kernel(AppState& state);
 void init_kernel_stepping(AppState& state);
-void step_kernel(AppState& state);
+void step_kernel(AppState& state, bool updateVisuals);

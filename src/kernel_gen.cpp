@@ -53,11 +53,11 @@ void init_kernel_stepping(AppState& state) {
     std::vector<bool> isConcaveFace = mesh_utils::identify_concave_faces(state.mesh);
 
     // * Concavity early termination
-    // if (std::none_of(isConcaveFace.begin(), isConcaveFace.end(), [](bool v) { return v; })) {
-    //     polyscope::info("Mesh has no concave faces. Kernel is the mesh itself.");
-    //     state.kHat = state.mesh;
-    //     return;
-    // }
+    if (std::none_of(isConcaveFace.begin(), isConcaveFace.end(), [](bool v) { return v; })) {
+        polyscope::info("Mesh has no concave faces. Kernel is the mesh itself.");
+        state.kHat = state.mesh;
+        return;
+    }
 
     std::vector<Plane> concavePlanes;
     std::vector<Plane> convexPlanes;
@@ -103,18 +103,19 @@ void init_kernel_stepping(AppState& state) {
     state.kSMesh->setTransparency(constants::transparencies::kernel);
 }
 
-void step_kernel(AppState& state) {
+void step_kernel(AppState& state, bool updateVisuals = true) {
     if (!state.isSteppingKernel || state.supportPlanes.empty()) return;
-    print::debug("Stepping kernel: processing plane idx " + std::to_string(state.currentPlaneIdx));
+
+    print::info("Kernel Generation: Processing plane " + std::to_string(state.currentPlaneIdx) + " / " + std::to_string(state.supportPlanes.size()));
 
     if (static_cast<size_t>(state.currentPlaneIdx) >= state.supportPlanes.size()) {
-        print::info("All planes processed.");
+        print::info("Kernel Generation: All planes processed.");
         state.isSteppingKernel = false;
         return;
     }
 
     if (state.kHat.is_empty()) {
-        print::info("Kernel is empty.");
+        print::info("Kernel Generation: Kernel is empty.");
         state.isSteppingKernel = false;
         return;
     }
@@ -125,23 +126,26 @@ void step_kernel(AppState& state) {
     plane.d += EPSILON * 5.0f;  // add a small offset to ensure we don't run into numerical issues with coplanar faces
     
     // Visualize the current support plane
-    mesh_utils::visualize_cut_plane(state, plane);
+    if (updateVisuals) {
+        mesh_utils::visualize_cut_plane(state, plane);
+    }
 
     // Perform the cut
-    mesh_utils::cut_at_plane_linear_search(state, state.kHat, plane);
+    if (state.selectedCutAlgorithm == CutAlgorithm::Standard) {
+        mesh_utils::cut_at_plane(state, state.kHat, plane);
+    } else {
+        mesh_utils::cut_at_plane_linear_search(state, state.kHat, plane);
+    }
     
     state.currentPlaneIdx++;
 
     // Update the kernel surface mesh in Polyscope
-    if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
-    state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
-    state.kSMesh->setSurfaceColor(constants::colors::kernel);
-    state.kSMesh->setTransparency(constants::transparencies::kernel);
-
-    // if (static_cast<size_t>(state.currentPlaneIdx) >= state.supportPlanes.size()) {
-    //     print::info("Kernel generation completed.");
-    //     state.isSteppingKernel = false;
-    // }
+    if (updateVisuals) {
+        if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
+        state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
+        state.kSMesh->setSurfaceColor(constants::colors::kernel);
+        state.kSMesh->setTransparency(constants::transparencies::kernel);
+    }
 }
 
 void generate_kernel(AppState& state) {
@@ -149,4 +153,10 @@ void generate_kernel(AppState& state) {
     while (state.isSteppingKernel) {
         step_kernel(state);
     }
+
+    // Final visual update
+    if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
+    state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
+    state.kSMesh->setSurfaceColor(constants::colors::kernel);
+    state.kSMesh->setTransparency(constants::transparencies::kernel);
 }

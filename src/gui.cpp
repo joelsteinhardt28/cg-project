@@ -94,6 +94,18 @@ void render(AppState& state) {
 
 
     if (state.meshLoaded) {
+        // * Dropdown to select cutting algorithm
+        const char* algoPreview = (state.selectedCutAlgorithm == CutAlgorithm::Standard) ? "Standard (cut_at_plane)" : "Linear Search";
+        if (ImGui::BeginCombo("Cutting Algorithm", algoPreview)) {
+            if (ImGui::Selectable("Standard (cut_at_plane)", state.selectedCutAlgorithm == CutAlgorithm::Standard)) {
+                state.selectedCutAlgorithm = CutAlgorithm::Standard;
+            }
+            if (ImGui::Selectable("Linear Search", state.selectedCutAlgorithm == CutAlgorithm::LinearSearch)) {
+                state.selectedCutAlgorithm = CutAlgorithm::LinearSearch;
+            }
+            ImGui::EndCombo();
+        }
+
         if (ImGui::Button("Identify Concave Faces")) {
             std::vector<bool> isConcave = mesh_utils::identify_concave_faces(state.mesh);
             std::vector<double> scalarVal(state.mesh.n_faces());
@@ -110,7 +122,11 @@ void render(AppState& state) {
         if (state.hasActiveCutPlane) {
             ImGui::SameLine();
             if (ImGui::Button("Cut")) {
-                mesh_utils::cut_at_plane_linear_search(state, state.mesh, state.activeCutPlane);
+                if (state.selectedCutAlgorithm == CutAlgorithm::Standard) {
+                    mesh_utils::cut_at_plane(state, state.mesh, state.activeCutPlane);
+                } else {
+                    mesh_utils::cut_at_plane_linear_search(state, state.mesh, state.activeCutPlane);
+                }
                 polyscope::removeSurfaceMesh("Clipped Random Plane");
                 state.hasActiveCutPlane = false;
             }
@@ -123,6 +139,8 @@ void render(AppState& state) {
         ImGui::Separator();
         ImGui::Text("Debug Kernel Generation");
 
+        ImGui::Checkbox("Update Visuals During Stepping", &state.updateVisuals);
+
         if (!state.isSteppingKernel) {
             if (ImGui::Button("Start Kernel Stepping")) {
                 init_kernel_stepping(state);
@@ -130,13 +148,19 @@ void render(AppState& state) {
         } else {
             ImGui::Text("Step: %d / %zu", state.currentPlaneIdx, state.supportPlanes.size());
             if (ImGui::Button("Next Step")) {
-                step_kernel(state);
+                step_kernel(state, state.updateVisuals);
             }
             ImGui::SameLine();
             if (ImGui::Button("Finish Kernel")) {
                 while (state.isSteppingKernel) {
-                    step_kernel(state);
+                    step_kernel(state, state.updateVisuals);
                 }
+
+                // Final visual update
+                if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
+                state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
+                state.kSMesh->setSurfaceColor(constants::colors::kernel);
+                state.kSMesh->setTransparency(constants::transparencies::kernel);
             }
             if (ImGui::Button("Cancel Stepping")) {
                 state.isSteppingKernel = false;
