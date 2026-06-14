@@ -123,9 +123,9 @@ void render(AppState& state) {
             ImGui::SameLine();
             if (ImGui::Button("Cut")) {
                 if (state.selectedCutAlgorithm == CutAlgorithm::Standard) {
-                    mesh_utils::cut_at_plane(state, state.mesh, state.activeCutPlane);
+                    mesh_utils::cut_at_plane(state, state.mesh, state.activeCutPlane, true);
                 } else {
-                    mesh_utils::cut_at_plane_linear_search(state, state.mesh, state.activeCutPlane);
+                    mesh_utils::cut_at_plane_linear_search(state, state.mesh, state.activeCutPlane, true);
                 }
                 polyscope::removeSurfaceMesh("Clipped Random Plane");
                 state.hasActiveCutPlane = false;

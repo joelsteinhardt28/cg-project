@@ -16,8 +16,8 @@ namespace mesh_utils {
     void visualize_cut_plane(AppState& state, const Plane& plane);
     void generate_random_bbox_plane(AppState& state);
 
-    void cut_at_plane(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane);
-    void cut_at_plane_linear_search(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane);
+    void cut_at_plane(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane, bool updateVisuals);
+    void cut_at_plane_linear_search(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane, bool updateVisuals);
 
     std::vector<bool> identify_concave_faces(const pmp::SurfaceMesh& mesh);
 }

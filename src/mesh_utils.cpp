@@ -282,11 +282,13 @@ pmp::Halfedge edge_descent(pmp::SurfaceMesh& mesh, const Plane& plane) {
  * Perform a cut of the mesh at the given plane. The mesh is required to be convex.
  * The mesh must be loaded in `state.mesh` and the Polyscope visualization will be updated after the cut.
  */
-void cut_at_plane(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane) {
+void cut_at_plane(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane, bool updateVisuals = false) {
     print::debug("Cut at plane");
     if (mesh.is_empty()) return;
 
-    visualize_cut_plane(state, plane);
+    if (updateVisuals) {
+        visualize_cut_plane(state, plane);
+    }
 
     // Lambda helper to discretize vertex states
     auto is_kept = [&](pmp::Point p) {
@@ -419,12 +421,14 @@ void cut_at_plane(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane) {
  * Cuts the mesh at the given plane, discarding the positive half-space. This algorithm classifies 
  * every vertex of the mesh with respect to its position relative to the plane.
  */
-void cut_at_plane_linear_search(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane) {
+void cut_at_plane_linear_search(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane, bool updateVisuals = false) {
     print::debug("Perform mesh-plane cutting ...");
 
     if (mesh.is_empty()) return;
 
-    visualize_cut_plane(state, plane);
+    if (updateVisuals) {
+        visualize_cut_plane(state, plane);
+    }
 
     // * TOPOLOGICAL CLASSIFICATION
     // Classify each vertex with respect to the plane using the signed distance.

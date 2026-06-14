@@ -111,12 +111,26 @@ void step_kernel(AppState& state, bool updateVisuals = true) {
     if (static_cast<size_t>(state.currentPlaneIdx) >= state.supportPlanes.size()) {
         print::info("Kernel Generation: All planes processed.");
         state.isSteppingKernel = false;
+
+        // Final visual update
+        if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
+        state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
+        state.kSMesh->setSurfaceColor(constants::colors::kernel);
+        state.kSMesh->setTransparency(constants::transparencies::kernel);
+
         return;
     }
 
     if (state.kHat.is_empty()) {
         print::info("Kernel Generation: Kernel is empty.");
         state.isSteppingKernel = false;
+
+        // Final visual update
+        if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
+        state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
+        state.kSMesh->setSurfaceColor(constants::colors::kernel);
+        state.kSMesh->setTransparency(constants::transparencies::kernel);
+
         return;
     }
 
@@ -132,9 +146,9 @@ void step_kernel(AppState& state, bool updateVisuals = true) {
 
     // Perform the cut
     if (state.selectedCutAlgorithm == CutAlgorithm::Standard) {
-        mesh_utils::cut_at_plane(state, state.kHat, plane);
+        mesh_utils::cut_at_plane(state, state.kHat, plane, state.updateVisuals);
     } else {
-        mesh_utils::cut_at_plane_linear_search(state, state.kHat, plane);
+        mesh_utils::cut_at_plane_linear_search(state, state.kHat, plane, state.updateVisuals);
     }
     
     state.currentPlaneIdx++;
