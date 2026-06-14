@@ -1,6 +1,38 @@
 #include "kernel_gen.hpp"
 
 
+namespace {
+    struct UnionFind {
+        std::vector<int> parent;
+        std::vector<int> rank;
+
+        UnionFind(int n) : parent(n), rank(n, 0) {
+            for (int i = 0; i < n; ++i) parent[i] = i;
+        }
+
+        int find(int i) {
+            if (parent[i] == i) return i;
+            return parent[i] = find(parent[i]);
+        }
+
+        void unite(int i, int j) {
+            int root_i = find(i);
+            int root_j = find(j);
+            if (root_i != root_j) {
+                if (rank[root_i] > rank[root_j]) {
+                    parent[root_j] = root_i;
+                } else if (rank[root_i] < rank[root_j]) {
+                    parent[root_i] = root_j;
+                } else {
+                    parent[root_j] = root_i;
+                    rank[root_i]++;
+                }
+            }
+        }
+    };
+}
+
+
 // * Given a bounding box, construct a surface mesh representing its axis-aligned bounding box (AABB).
 pmp::SurfaceMesh construct_aabb_mesh(pmp::BoundingBox& bbox) {
     pmp::SurfaceMesh aabb;
@@ -59,33 +91,105 @@ void init_kernel_stepping(AppState& state) {
         return;
     }
 
-    std::vector<Plane> concavePlanes;
-    std::vector<Plane> convexPlanes;
+    // std::vector<Plane> concavePlanes;
+    // std::vector<Plane> convexPlanes;
 
-    // Extract supporting planes from input mesh
-    state.supportPlanes.clear();
-    state.supportPlanes.reserve(state.mesh.n_faces());
+    // // Extract supporting planes from input mesh
+    // state.supportPlanes.clear();
+    // state.supportPlanes.reserve(state.mesh.n_faces());
 
-    // * Iterate over faces to compute their supporting planes
+    // // * Iterate over faces to compute their supporting planes
+    // for (auto face : state.mesh.faces()) {
+    //     auto it = state.mesh.vertices(face).begin();
+    //     pmp::Point vA = state.mesh.position(*it); ++it;
+    //     pmp::Point vB = state.mesh.position(*it); ++it;
+    //     pmp::Point vC = state.mesh.position(*it);
+
+    //     // Compute the normal of the face
+    //     pmp::vec3 e1 = vB - vA;
+    //     pmp::vec3 e2 = vC - vA;
+    //     pmp::vec3 normal = pmp::cross(e1, e2);
+
+    //     if (pmp::norm(normal) > EPSILON) {      // Check for degenerate face
+    //         normal = pmp::normalize(normal);
+    //         float d = -pmp::dot(normal, vA);    // Plane offset d_i = -n_i^\top \cdot v_a
+
+    //         // Separate concave vs convex faces based on the precomputed list
+    //         bool isConcave = face.idx() < static_cast<unsigned int>(isConcaveFace.size()) && isConcaveFace[face.idx()];
+    //         std::vector<Plane>& targetList = isConcave ? concavePlanes : convexPlanes;
+    //         targetList.push_back({normal, d});
+    //     }
+    // }
+
+    // 1. Precompute all valid face planes
+    size_t numFaces = state.mesh.n_faces();
+    std::vector<Plane> facePlanes(numFaces);
+    std::vector<bool> validPlane(numFaces, false);
+
     for (auto face : state.mesh.faces()) {
         auto it = state.mesh.vertices(face).begin();
         pmp::Point vA = state.mesh.position(*it); ++it;
         pmp::Point vB = state.mesh.position(*it); ++it;
         pmp::Point vC = state.mesh.position(*it);
 
-        // Compute the normal of the face
-        pmp::vec3 e1 = vB - vA;
-        pmp::vec3 e2 = vC - vA;
-        pmp::vec3 normal = pmp::cross(e1, e2);
-
+        pmp::vec3 normal = pmp::cross(vB - vA, vC - vA);
         if (pmp::norm(normal) > EPSILON) {      // Check for degenerate face
             normal = pmp::normalize(normal);
-            float d = -pmp::dot(normal, vA);    // Plane offset d_i = -n_i^\top \cdot v_a
+            float d = -pmp::dot(normal, vA);
+            facePlanes[face.idx()] = {normal, d};
+            validPlane[face.idx()] = true;
+        }
+    }
 
-            // Separate concave vs convex faces based on the precomputed list
-            bool isConcave = face.idx() < static_cast<unsigned int>(isConcaveFace.size()) && isConcaveFace[face.idx()];
-            std::vector<Plane>& targetList = isConcave ? concavePlanes : convexPlanes;
-            targetList.push_back({normal, d});
+    // 2. Group connected coplanar faces using Union-Find
+    UnionFind uf(numFaces);
+    const float COPLANAR_NORMAL_TOLERANCE = 1.0f - 1e-5f; // approx 0.25 degrees
+    const float COPLANAR_DIST_TOLERANCE = 1e-4f;
+
+    for (auto edge : state.mesh.edges()) {
+        if (state.mesh.is_boundary(edge)) continue;
+
+        pmp::Face f0 = state.mesh.face(state.mesh.halfedge(edge, 0));
+        pmp::Face f1 = state.mesh.face(state.mesh.halfedge(edge, 1));
+
+        if (validPlane[f0.idx()] && validPlane[f1.idx()]) {
+            const Plane& p0 = facePlanes[f0.idx()];
+            const Plane& p1 = facePlanes[f1.idx()];
+
+            // Check if adjacent faces are coplanar
+            if (pmp::dot(p0.normal, p1.normal) > COPLANAR_NORMAL_TOLERANCE &&
+                std::abs(p0.d - p1.d) < COPLANAR_DIST_TOLERANCE) {
+                uf.unite(f0.idx(), f1.idx());
+            }
+        }
+    }
+
+    // 3. Aggregate concavity properties for the clustered sets
+    // If any face in the coplanar patch is concave, the whole plane is treated as concave.
+    std::vector<bool> isSetConcave(numFaces, false);
+    for (auto face : state.mesh.faces()) {
+        if (!validPlane[face.idx()]) continue;
+        int root = uf.find(face.idx());
+        if (isConcaveFace[face.idx()]) {
+            isSetConcave[root] = true;
+        }
+    }
+
+    // 4. Extract unique supporting planes (only 1 per disjoint set)
+    std::vector<Plane> concavePlanes;
+    std::vector<Plane> convexPlanes;
+    state.supportPlanes.clear();
+
+    for (auto face : state.mesh.faces()) {
+        if (!validPlane[face.idx()]) continue;
+
+        // Only add the plane if this face is the "root" of its coplanar cluster
+        if (uf.find(face.idx()) == static_cast<int>(face.idx())) {
+            if (isSetConcave[face.idx()]) {
+                concavePlanes.push_back(facePlanes[face.idx()]);
+            } else {
+                convexPlanes.push_back(facePlanes[face.idx()]);
+            }
         }
     }
 
