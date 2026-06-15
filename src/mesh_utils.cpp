@@ -176,6 +176,16 @@ void visualize_cut_plane(AppState& state, const Plane& plane) {
     auto* planeMesh = polyscope::registerSurfaceMesh(std::string(constants::polyNames::cutPlane), polygon, faces);
     planeMesh->setSurfaceColor(constants::colors::cutPlane);
     planeMesh->setTransparency(constants::transparencies::cutPlane);
+
+    // Visualize plane normal
+    std::vector<glm::vec3> normalVertices = {
+        center,
+        center + normal * (scale * 0.1f)
+    };
+    std::vector<std::array<size_t, 2>> normalEdges = {{0, 1}};
+    auto* normalCN = polyscope::registerCurveNetwork(std::string(constants::polyNames::cutPlaneNormal), normalVertices, normalEdges);
+    normalCN->setColor(constants::colors::cutPlaneNormal);
+    normalCN->setRadius(constants::otherVisuals::normalRadius);
 }
 
 
