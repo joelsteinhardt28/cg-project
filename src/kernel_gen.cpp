@@ -67,6 +67,12 @@ pmp::SurfaceMesh construct_aabb_mesh(pmp::BoundingBox& bbox) {
     return aabb;
 }
 
+
+/**
+ * Intiializes the kernel stepping process by first checking for early termination conditions, then performing
+ * plane clustering to group coplanar faces and sort them by concavity, and finally registering the 
+ * intermediate kernel as the AABB of the original mesh.
+ */
 void init_kernel_stepping(AppState& state) {
     if (!state.meshLoaded || state.mesh.is_empty()) return;
 
@@ -181,6 +187,12 @@ void init_kernel_stepping(AppState& state) {
     state.kSMesh->setTransparency(constants::transparencies::kernel);
 }
 
+
+/**
+ * Performs one step of the kernel generation process. The intermediate kernel is cut at the current support plane,
+ * stored in AppState, and the visuals are updated in Polyscope, if `updateVisuals` is set. Checks for termination
+ * conditions and advances the current plane index.
+ */
 void step_kernel(AppState& state, bool updateVisuals = true) {
     if (!state.isSteppingKernel || state.supportPlanes.empty()) return;
 
@@ -240,6 +252,9 @@ void step_kernel(AppState& state, bool updateVisuals = true) {
     }
 }
 
+/**
+ * Executes the full kernel generation process.
+ */
 void generate_kernel(AppState& state) {
     init_kernel_stepping(state);
     while (state.isSteppingKernel) {

@@ -4,12 +4,8 @@
 #include <random>
 #include <algorithm>
 
-#include "polyscope/polyscope.h"
-#include "polyscope/surface_mesh.h"
-#include "polyscope/point_cloud.h"
 #include "polyscope/curve_network.h"
 
-#include <pmp/surface_mesh.h>
 #include <pmp/bounding_box.h>
 #include <pmp/algorithms/utilities.h>
 #include <pmp/exceptions.h>
@@ -93,7 +89,8 @@ void register_bbox(AppState& state) {
 
 /*
  * Visualizes the given plane as a quad that fills the bbox of the mesh. There can only be one cutting plane
- * visualized at a time. It is registered as `constants::polyNames::cutPlane` in Polyscope.
+ * visualized at a time. It is registered as `constants::polyNames::cutPlane` in Polyscope. The normal of 
+ * the plane is also visualized as a curve network registered as `constants::polyNames::cutPlaneNormal`.
  */
 void visualize_cut_plane(AppState& state, const Plane& plane) {
     if (state.bboxVertices.empty()) return;
@@ -229,6 +226,47 @@ void generate_random_bbox_plane(AppState& state) {
 }
 
 
+/**
+ * Given a mesh, returns a boolean vector indicating which faces are concave.
+ * The function evaluates the signed volume formed by the current face and its opposite face across each edge.
+ * If the volume is positive, it indicates that the opposite face is above the plane of the current face, 
+ * suggesting a concave configuation.
+ */
+std::vector<bool> identify_concave_faces(const pmp::SurfaceMesh& mesh) {
+    std::vector<bool> isConcave(mesh.n_faces(), false);
+
+    for (auto e : mesh.edges()) {
+        if (mesh.is_boundary(e)) continue;
+
+        pmp::Halfedge he0 = mesh.halfedge(e, 0);
+        pmp::Halfedge he1 = mesh.halfedge(e, 1);
+
+        pmp::Vertex v0 = mesh.from_vertex(he0);
+        pmp::Vertex v1 = mesh.to_vertex(he0);
+        pmp::Vertex v2 = mesh.to_vertex(mesh.next_halfedge(he0));
+        pmp::Vertex v3 = mesh.to_vertex(mesh.next_halfedge(he1));
+
+        pmp::Point p0 = mesh.position(v0);
+        pmp::Point p1 = mesh.position(v1);
+        pmp::Point p2 = mesh.position(v2);
+        pmp::Point p3 = mesh.position(v3);
+
+        pmp::vec3 n_f0 = pmp::cross(p1 - p0, p2 - p0);
+        float det = pmp::dot(n_f0, p3 - p0);  // Scalar triple product (equivalent to 4x4 determinant with hom. coord.)
+
+        // If det > 0, the fourth vertex is above the plane of f0
+        if (det > EPSILON) {
+            pmp::Face f0 = mesh.face(he0);
+            pmp::Face f1 = mesh.face(he1);
+            isConcave[f0.idx()] = true;
+            isConcave[f1.idx()] = true;
+        }
+    }
+
+    return isConcave;
+}
+
+
 // * IMPLEMENTATION OF MESH-PLANE CUTTING * //
 
 /*
@@ -287,6 +325,7 @@ pmp::Halfedge edge_descent(pmp::SurfaceMesh& mesh, const Plane& plane) {
 
     return pmp::Halfedge(); // No crossing edge found
 }
+
 
 /*
  * Perform a cut of the mesh at the given plane. The mesh is required to be convex.
@@ -614,47 +653,6 @@ void cut_at_plane_linear_search(AppState& state, pmp::SurfaceMesh& mesh, const P
     }
 
     pmp::triangulate(mesh);
-}
-
-
-/**
- * Given a mesh, returns a boolean vector indicating which faces are concave.
- * The function evaluates the signed volume formed by the current face and its opposite face across each edge.
- * If the volume is positive, it indicates that the opposite face is above the plane of the current face, 
- * suggesting a concave configuation.
- */
-std::vector<bool> identify_concave_faces(const pmp::SurfaceMesh& mesh) {
-    std::vector<bool> isConcave(mesh.n_faces(), false);
-
-    for (auto e : mesh.edges()) {
-        if (mesh.is_boundary(e)) continue;
-
-        pmp::Halfedge he0 = mesh.halfedge(e, 0);
-        pmp::Halfedge he1 = mesh.halfedge(e, 1);
-
-        pmp::Vertex v0 = mesh.from_vertex(he0);
-        pmp::Vertex v1 = mesh.to_vertex(he0);
-        pmp::Vertex v2 = mesh.to_vertex(mesh.next_halfedge(he0));
-        pmp::Vertex v3 = mesh.to_vertex(mesh.next_halfedge(he1));
-
-        pmp::Point p0 = mesh.position(v0);
-        pmp::Point p1 = mesh.position(v1);
-        pmp::Point p2 = mesh.position(v2);
-        pmp::Point p3 = mesh.position(v3);
-
-        pmp::vec3 n_f0 = pmp::cross(p1 - p0, p2 - p0);
-        float det = pmp::dot(n_f0, p3 - p0);  // Scalar triple product (equivalent to 4x4 determinant with hom. coord.)
-
-        // If det > 0, the fourth vertex is above the plane of f0
-        if (det > EPSILON) {
-            pmp::Face f0 = mesh.face(he0);
-            pmp::Face f1 = mesh.face(he1);
-            isConcave[f0.idx()] = true;
-            isConcave[f1.idx()] = true;
-        }
-    }
-
-    return isConcave;
 }
 
 } // namespace mesh_utils

@@ -1,6 +1,8 @@
 #include "toolbox.hpp"
 #include "constants.hpp"
 
+#include <iostream>
+
 namespace print {
     void info(const std::string& msg) {
         std::cout << "\033[1;32m[INFO] \033[0;32m" << msg << "\033[0m" << std::endl;

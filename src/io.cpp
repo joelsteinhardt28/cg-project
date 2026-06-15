@@ -6,7 +6,7 @@
 
 #include "polyscope/messages.h"
 
-/*
+/**
  * Reads an OFF file and populates the provided vectors with points, faces, and optionally normals.
  */
 void readOff(const std::string& filename, std::vector<Point>& points, std::vector<Face>& faces, std::vector<Normal>& normals) {

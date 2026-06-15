@@ -2,22 +2,21 @@
 
 #include <filesystem>
 
-#include "polyscope/polyscope.h"
 #include "polyscope/messages.h"
-#include "polyscope/point_cloud.h"
-#include "polyscope/surface_mesh.h"
 #include "imgui.h"
 
-#include <pmp/surface_mesh.h>
 #include <pmp/io/io.h>
 
 #include "io.hpp"
 #include "mesh_utils.hpp"
 #include "kernel_gen.hpp"
-#include "toolbox.hpp"
 
 namespace gui {
 
+/**
+ * Resets the polyscope application state by clearing all registered structures and resetting the AppState
+ * fields to their default values.
+ */
 void reset(AppState& state) {
     print::info("Resetting application state...");
     polyscope::removeAllStructures();
@@ -31,7 +30,9 @@ void reset(AppState& state) {
     state.currentPlaneIdx = 0;
 }
 
-// * Helper to scan the OFF file directory and populate the list in AppState of available files
+/**
+ * Helper to scan the OFF file directory and populate the list in AppState of available files
+ */
 void refreshOffFileList(AppState& state) {
     state.offFiles.clear();
     if (!std::filesystem::exists(state.targetDir)) return;
@@ -42,6 +43,7 @@ void refreshOffFileList(AppState& state) {
         }
     }
 }    
+
 
 void render(AppState& state) {
     if (state.offFiles.empty()) {
