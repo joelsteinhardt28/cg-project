@@ -324,6 +324,17 @@ void cut_at_plane(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane, b
 
     if (!start_he.is_valid()) {
         print::debug("No intersection found with the plane.");
+
+        // Check if all vertices are on the positive side of the plane
+        if (mesh.vertices_size() > 0) {
+            pmp::Vertex first = *mesh.vertices_begin();
+            if (plane.distance(mesh.position(first)) > EPSILON) {
+                print::info("All vertices are on the positive side of the plane. Discarding kernel.");
+                mesh.clear();
+                return;
+            }
+        }
+
         return;
     }
 
