@@ -35,7 +35,7 @@ namespace {
 }
 
 
-// * Given a bounding box, construct a surface mesh representing its axis-aligned bounding box (AABB).
+// * Given a bounding box, construct a surface quad mesh representing its axis-aligned bounding box (AABB).
 pmp::SurfaceMesh construct_aabb_mesh(pmp::BoundingBox& bbox) {
     pmp::SurfaceMesh aabb;
 
@@ -59,10 +59,6 @@ pmp::SurfaceMesh construct_aabb_mesh(pmp::BoundingBox& bbox) {
     aabb.add_face({v1, v2, v6, v5}); // Right face
     aabb.add_face({v2, v3, v7, v6}); // Back face
     aabb.add_face({v3, v0, v4, v7}); // Left face
-
-    for (auto face : aabb.faces()) {
-        triangulate(aabb, face);
-    }
     
     return aabb;
 }
