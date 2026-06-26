@@ -5,6 +5,9 @@
 
 #include <glm/glm.hpp>
 #include <pmp/surface_mesh.h>
+#include <integer-plane-geometry/geometry.hh>
+#include <integer-plane-geometry/point.hh>
+#include <integer-plane-geometry/plane.hh>
 
 
 // Forward declarations
@@ -16,6 +19,10 @@ namespace polyscope {
 using Point = pmp::vec3;
 using Face = std::vector<size_t>;
 using Normal = pmp::vec3;
+
+using ExactGeom = ipg::geometry256_x64_n45;
+using ExactPoint = ipg::point4<ExactGeom>;
+using ExactPlane = ipg::plane<ExactGeom>;
 
 using Color = glm::vec3; // RGB color, each component in [0,1]
 

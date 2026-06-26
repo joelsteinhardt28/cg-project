@@ -66,6 +66,22 @@ void render(AppState& state) {
                     pmp::SurfaceMesh tempMesh;
                     print::info("Reading mesh from: " + selectedPath.string());
                     pmp::read(tempMesh, selectedPath);
+
+                    // Properties for ipg
+                    auto exactPoints = tempMesh.add_vertex_property<ExactPoint>("v:exact_pos");
+                    auto exactPlanes = tempMesh.add_face_property<ExactPlane>("f:exact_plane");
+
+                    // Scale and snap vertex positions to integer grid and store in pmp property
+                    for (auto v : tempMesh.vertices()) {
+                        pmp::Point p = tempMesh.position(v);
+                        tg::ipos3 ipos(
+                            static_cast<int64_t>(p[0] * globalSettings::scaleFactor),
+                            static_cast<int64_t>(p[1] * globalSettings::scaleFactor),
+                            static_cast<int64_t>(p[2] * globalSettings::scaleFactor)
+                        );
+                        exactPoints[v] = ExactPoint(ipos);
+                    }
+
                     state.mesh = std::move(tempMesh);
                     print::info("Mesh loaded: " + std::to_string(state.mesh.n_vertices()) + " vertices, " + std::to_string(state.mesh.n_faces()) + " faces.");
 

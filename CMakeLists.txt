@@ -23,7 +23,7 @@ set( CMAKE_EXPORT_COMPILE_COMMANDS 1 ) # Emit a compile flags file to support co
 if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
   # using Clang (linux or apple) or GCC
   message("Using clang/gcc compiler flags")
-  SET(BASE_CXX_FLAGS "-std=c++17 -Wall -Wextra -Werror -g3")
+  SET(BASE_CXX_FLAGS "-std=c++17 -Wall -Wextra -g3 -march=native")
   SET(DISABLED_WARNINGS " -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-deprecated-declarations -Wno-missing-braces")
   SET(TRACE_INCLUDES " -H -Wno-error=unused-command-line-argument")
 
@@ -46,7 +46,7 @@ if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang" OR "${CMAKE_CXX_COMPILER_ID}" STR
 elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
   # using Visual Studio C++
   message("Using Visual Studio compiler flags")
-  set(BASE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4")
+  set(BASE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4 /arch:AVX2")
   set(BASE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP") # parallel build
   SET(DISABLED_WARNINGS "${DISABLED_WARNINGS} /wd\"4267\"")  # ignore conversion to smaller type (fires more aggressively than the gcc version, which is annoying)
   SET(DISABLED_WARNINGS "${DISABLED_WARNINGS} /wd\"4244\"")  # ignore conversion to smaller type (fires more aggressively than the gcc version, which is annoying)
@@ -97,8 +97,35 @@ FetchContent_Declare(
   GIT_PROGRESS TRUE)
 FetchContent_MakeAvailable(pmp)
 
+# Force TG_ENABLE_FIXED_INT to ON since our CPU supports it and integer-plane-geometry requires it
+set(TG_ENABLE_FIXED_INT ON CACHE BOOL "Enable typed-geometry fixed_int feature" FORCE)
+
+# Disable mold linker in clean-core to avoid linking errors if mold is not installed
+set(CC_LINKER_MOLD OFF CACHE BOOL "Disable mold linker" FORCE)
+
+FetchContent_Declare(
+  clean-core
+  GIT_REPOSITORY https://github.com/project-arcana/clean-core.git
+  GIT_TAG develop
+  GIT_SHALLOW TRUE
+  GIT_PROGRESS TRUE)
+FetchContent_MakeAvailable(clean-core)
+set_target_properties(clean-core PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:clean-core,INTERFACE_INCLUDE_DIRECTORIES>)
+
+FetchContent_Declare(
+  typed-geometry
+  GIT_REPOSITORY https://github.com/project-arcana/typed-geometry.git
+  GIT_TAG develop
+  GIT_SHALLOW TRUE
+  GIT_PROGRESS TRUE)
+FetchContent_MakeAvailable(typed-geometry)
+set_target_properties(typed-geometry PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:typed-geometry,INTERFACE_INCLUDE_DIRECTORIES>)
+
 # Create an executable
 add_executable(project src/main.cpp src/io.cpp src/gui.cpp src/mesh_utils.cpp src/kernel_gen.cpp src/toolbox.cpp)
+if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+  target_compile_options(project PRIVATE -Werror)
+endif()
 
 # Add header-only dependencies
 target_include_directories(project PRIVATE include)
@@ -108,4 +135,4 @@ target_include_directories(project PRIVATE "${polyscope_SOURCE_DIR}/deps/json/in
 target_include_directories(project PRIVATE "${pmp_SOURCE_DIR}/src")
 
 # Link to dependencies
-target_link_libraries(project PRIVATE polyscope portable_file_dialogs pmp)
+target_link_libraries(project PRIVATE polyscope portable_file_dialogs pmp clean-core typed-geometry)
