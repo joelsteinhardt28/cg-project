@@ -1,3 +1,6 @@
+#include <integer-plane-geometry/classify.hh>
+#include <integer-plane-geometry/are_parallel.hh>
+
 #include "kernel_gen.hpp"
 
 
@@ -38,28 +41,56 @@ namespace {
 // * Given a bounding box, construct a surface quad mesh representing its axis-aligned bounding box (AABB).
 pmp::SurfaceMesh construct_aabb_mesh(pmp::BoundingBox& bbox) {
     pmp::SurfaceMesh aabb;
+    auto exactPoints = aabb.add_vertex_property<ExactPoint>("v:exact_pos");
+    auto exactPlanes = aabb.add_face_property<ExactPlane>("f:exact_plane");
 
     pmp::Point min = bbox.min();
     pmp::Point max = bbox.max();
 
-    // Construct the eight vertices of the AABB
-    auto v0 = aabb.add_vertex(pmp::Point(min[0], min[1], min[2]));
-    auto v1 = aabb.add_vertex(pmp::Point(max[0], min[1], min[2]));
-    auto v2 = aabb.add_vertex(pmp::Point(max[0], max[1], min[2]));
-    auto v3 = aabb.add_vertex(pmp::Point(min[0], max[1], min[2]));
-    auto v4 = aabb.add_vertex(pmp::Point(min[0], min[1], max[2]));
-    auto v5 = aabb.add_vertex(pmp::Point(max[0], min[1], max[2]));
-    auto v6 = aabb.add_vertex(pmp::Point(max[0], max[1], max[2]));
-    auto v7 = aabb.add_vertex(pmp::Point(min[0], max[1], max[2]));
+    auto add_exact_vertex = [&](pmp::Point p) {
+        auto v = aabb.add_vertex(p);
+        tg::ipos3 ipos(
+            static_cast<int64_t>(p[0] * globalSettings::scaleFactor),
+            static_cast<int64_t>(p[1] * globalSettings::scaleFactor),
+            static_cast<int64_t>(p[2] * globalSettings::scaleFactor)
+        );
+        exactPoints[v] = ExactPoint(ipos);
+        return v;
+    };
 
-    // Construct the six faces
-    aabb.add_face({v0, v3, v2, v1}); // Bottom face
-    aabb.add_face({v4, v5, v6, v7}); // Top face
-    aabb.add_face({v0, v1, v5, v4}); // Front face
-    aabb.add_face({v1, v2, v6, v5}); // Right face
-    aabb.add_face({v2, v3, v7, v6}); // Back face
-    aabb.add_face({v3, v0, v4, v7}); // Left face
+    // Construct the eight vertices of the AABB
+    auto v0 = add_exact_vertex(pmp::Point(min[0], min[1], min[2]));
+    auto v1 = add_exact_vertex(pmp::Point(max[0], min[1], min[2]));
+    auto v2 = add_exact_vertex(pmp::Point(max[0], max[1], min[2]));
+    auto v3 = add_exact_vertex(pmp::Point(min[0], max[1], min[2]));
+    auto v4 = add_exact_vertex(pmp::Point(min[0], min[1], max[2]));
+    auto v5 = add_exact_vertex(pmp::Point(max[0], min[1], max[2]));
+    auto v6 = add_exact_vertex(pmp::Point(max[0], max[1], max[2]));
+    auto v7 = add_exact_vertex(pmp::Point(min[0], max[1], max[2]));
+
+    // Helper to bind faces and compute their exact supporting planes
+    auto add_exact_face = [&](std::vector<pmp::Vertex> vertices) {
+        auto f = aabb.add_face(vertices);
+        auto vA = exactPoints[vertices[0]];
+        auto vB = exactPoints[vertices[1]];
+        auto vC = exactPoints[vertices[2]];
+
+        // w=1 for initial AABB points, so x,y,z are exact unscaled integer coordinates
+        tg::pos<3, ExactGeom::pos_scalar_t> pA(int64_t(vA.x), int64_t(vA.y), int64_t(vA.z));
+        tg::pos<3, ExactGeom::pos_scalar_t> pB(int64_t(vB.x), int64_t(vB.y), int64_t(vB.z));
+        tg::pos<3, ExactGeom::pos_scalar_t> pC(int64_t(vC.x), int64_t(vC.y), int64_t(vC.z));
+
+        exactPlanes[f] = ExactPlane::from_points(pA, pB, pC);
+    };
     
+    // Construct the six faces of the AABB
+    add_exact_face({v0, v3, v2, v1}); // Bottom
+    add_exact_face({v4, v5, v6, v7}); // Top
+    add_exact_face({v0, v1, v5, v4}); // Front
+    add_exact_face({v2, v3, v7, v6}); // Back
+    add_exact_face({v3, v0, v4, v7}); // Left
+    add_exact_face({v1, v2, v6, v5}); // Right
+
     return aabb;
 }
 
@@ -101,25 +132,33 @@ void init_kernel_stepping(AppState& state) {
     std::vector<Plane> facePlanes(numFaces);
     std::vector<bool> validPlane(numFaces, false);
 
+    auto exactPoints = state.mesh.get_vertex_property<ExactPoint>("v:exact_pos");
+    auto exactPlanes = state.mesh.get_face_property<ExactPlane>("f:exact_plane");
+
     for (auto face : state.mesh.faces()) {
         auto it = state.mesh.vertices(face).begin();
-        pmp::Point vA = state.mesh.position(*it); ++it;
-        pmp::Point vB = state.mesh.position(*it); ++it;
-        pmp::Point vC = state.mesh.position(*it);
+        ExactPoint vA = exactPoints[*it]; ++it;
+        ExactPoint vB = exactPoints[*it]; ++it;
+        ExactPoint vC = exactPoints[*it];
 
-        pmp::vec3 normal = pmp::cross(vB - vA, vC - vA);
-        if (pmp::norm(normal) > EPSILON) {      // Check for degenerate face
-            normal = pmp::normalize(normal);
-            float d = -pmp::dot(normal, vA);
-            facePlanes[face.idx()] = {normal, d};
+        tg::pos<3, ExactGeom::pos_scalar_t> pA(int64_t(vA.x), int64_t(vA.y), int64_t(vA.z));
+        tg::pos<3, ExactGeom::pos_scalar_t> pB(int64_t(vB.x), int64_t(vB.y), int64_t(vB.z));
+        tg::pos<3, ExactGeom::pos_scalar_t> pC(int64_t(vC.x), int64_t(vC.y), int64_t(vC.z));
+
+        exactPlanes[face] = ExactPlane::from_points(pA, pB, pC);
+
+        if (exactPlanes[face].is_valid()) {
+            auto dp = exactPlanes[face].to_dplane();
+            facePlanes[face.idx()] = Plane{
+                pmp::vec3(dp.normal.x, dp.normal.y, dp.normal.z),
+                static_cast<float>(-dp.dis)
+            };
             validPlane[face.idx()] = true;
         }
     }
 
     // 2. Group connected coplanar faces using Union-Find
     UnionFind uf(numFaces);
-    const float COPLANAR_NORMAL_TOLERANCE = 1.0f - 1e-5f; // approx 0.25 degrees
-    const float COPLANAR_DIST_TOLERANCE = 1e-4f;
 
     for (auto edge : state.mesh.edges()) {
         if (state.mesh.is_boundary(edge)) continue;
@@ -129,12 +168,22 @@ void init_kernel_stepping(AppState& state) {
         pmp::Face f1 = state.mesh.face(state.mesh.halfedge(edge, 1));
 
         if (validPlane[f0.idx()] && validPlane[f1.idx()]) {
-            const Plane& p0 = facePlanes[f0.idx()];
-            const Plane& p1 = facePlanes[f1.idx()];
+            const ExactPlane& ep0 = exactPlanes[f0];
+            const ExactPlane& ep1 = exactPlanes[f1];
 
-            // Check if these adjacent faces are coplanar within tolerance
-            if (pmp::dot(p0.normal, p1.normal) > COPLANAR_NORMAL_TOLERANCE &&
-                std::abs(p0.d - p1.d) < COPLANAR_DIST_TOLERANCE) {
+            bool are_identical = false;
+            if (ipg::are_parallel(ep0, ep1)) {
+                // Checks if adjacent faces have identical supporting planes
+                if (!tg::is_zero(ep0.a)) {
+                    are_identical = (ipg::mul<192>(ep0.a, ep1.d) == ipg::mul<192>(ep1.a, ep0.d));
+                } else if (!tg::is_zero(ep0.b)) {
+                    are_identical = (ipg::mul<192>(ep0.b, ep1.d) == ipg::mul<192>(ep1.b, ep0.d));
+                } else {
+                    are_identical = (ipg::mul<192>(ep0.c, ep1.d) == ipg::mul<192>(ep1.c, ep0.d));
+                }
+            }
+
+            if (are_identical) {
                 uf.unite(f0.idx(), f1.idx());
             }
         }
@@ -154,7 +203,10 @@ void init_kernel_stepping(AppState& state) {
     // 4. Extract unique supporting planes (only 1 per disjoint set)
     std::vector<Plane> concavePlanes;
     std::vector<Plane> convexPlanes;
+    std::vector<ExactPlane> exactConcavePlanes;
+    std::vector<ExactPlane> exactConvexPlanes;
     state.supportPlanes.clear();
+    state.exactSupportPlanes.clear();
 
     for (auto face : state.mesh.faces()) {
         if (!validPlane[face.idx()]) continue;
@@ -163,8 +215,10 @@ void init_kernel_stepping(AppState& state) {
         if (uf.find(face.idx()) == static_cast<int>(face.idx())) {
             if (isSetConcave[face.idx()]) {
                 concavePlanes.push_back(facePlanes[face.idx()]);
+                exactConcavePlanes.push_back(exactPlanes[face]);
             } else {
                 convexPlanes.push_back(facePlanes[face.idx()]);
+                exactConvexPlanes.push_back(exactPlanes[face]);
             }
         }
     }
@@ -172,6 +226,8 @@ void init_kernel_stepping(AppState& state) {
     // Prioritize concave planes first, then convex planes
     state.supportPlanes.insert(state.supportPlanes.end(), concavePlanes.begin(), concavePlanes.end());
     state.supportPlanes.insert(state.supportPlanes.end(), convexPlanes.begin(), convexPlanes.end());
+    state.exactSupportPlanes.insert(state.exactSupportPlanes.end(), exactConcavePlanes.begin(), exactConcavePlanes.end());
+    state.exactSupportPlanes.insert(state.exactSupportPlanes.end(), exactConvexPlanes.begin(), exactConvexPlanes.end());
 
     state.currentPlaneIdx = 0;
     state.isSteppingKernel = true;
@@ -221,9 +277,6 @@ void step_kernel(AppState& state, bool updateVisuals = true) {
     }
 
     Plane& plane = state.supportPlanes[state.currentPlaneIdx];
-
-    // TODO: Remove this
-    plane.d += EPSILON * 5.0f;  // add a small offset to ensure we don't run into numerical issues with coplanar faces
     
     // Visualize the current support plane
     if (updateVisuals) {
@@ -232,9 +285,9 @@ void step_kernel(AppState& state, bool updateVisuals = true) {
 
     // Perform the cut
     if (state.selectedCutAlgorithm == CutAlgorithm::Standard) {
-        mesh_utils::cut_at_plane(state, state.kHat, plane, state.updateVisuals);
+        mesh_utils::cut_at_plane(state, state.kHat, plane, state.exactSupportPlanes[state.currentPlaneIdx], state.updateVisuals);
     } else {
-        mesh_utils::cut_at_plane_linear_search(state, state.kHat, plane, state.updateVisuals);
+        mesh_utils::cut_at_plane_linear(state, state.kHat, plane, state.exactSupportPlanes[state.currentPlaneIdx], state.updateVisuals);
     }
     
     state.currentPlaneIdx++;

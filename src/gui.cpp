@@ -82,6 +82,19 @@ void render(AppState& state) {
                         exactPoints[v] = ExactPoint(ipos);
                     }
 
+                    for (auto face : tempMesh.faces()) {
+                        auto it = tempMesh.vertices(face).begin();
+                        ExactPoint vA = exactPoints[*it]; ++it;
+                        ExactPoint vB = exactPoints[*it]; ++it;
+                        ExactPoint vC = exactPoints[*it];
+
+                        tg::pos<3, ExactGeom::pos_scalar_t> pA(int64_t(vA.x), int64_t(vA.y), int64_t(vA.z));
+                        tg::pos<3, ExactGeom::pos_scalar_t> pB(int64_t(vB.x), int64_t(vB.y), int64_t(vB.z));
+                        tg::pos<3, ExactGeom::pos_scalar_t> pC(int64_t(vC.x), int64_t(vC.y), int64_t(vC.z));
+
+                        exactPlanes[face] = ExactPlane::from_points(pA, pB, pC);
+                    }
+
                     state.mesh = std::move(tempMesh);
                     print::info("Mesh loaded: " + std::to_string(state.mesh.n_vertices()) + " vertices, " + std::to_string(state.mesh.n_faces()) + " faces.");
 
@@ -143,7 +156,7 @@ void render(AppState& state) {
                 if (state.selectedCutAlgorithm == CutAlgorithm::Standard) {
                     mesh_utils::cut_at_plane(state, state.mesh, state.activeCutPlane, true);
                 } else {
-                    mesh_utils::cut_at_plane_linear_search(state, state.mesh, state.activeCutPlane, true);
+                    print::warning("Not implemented yet");
                 }
                 polyscope::removeSurfaceMesh("Clipped Random Plane");
                 state.hasActiveCutPlane = false;

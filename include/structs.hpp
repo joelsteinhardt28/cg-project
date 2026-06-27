@@ -81,6 +81,7 @@ struct AppState {
     bool isSteppingKernel = false;
     int currentPlaneIdx = 0;
     std::vector<Plane> supportPlanes;
+    std::vector<ExactPlane> exactSupportPlanes;
     Plane activeCutPlane;
     bool hasActiveCutPlane = false;
 
