@@ -125,18 +125,6 @@ void render(AppState& state) {
 
 
     if (state.meshLoaded) {
-        // * Dropdown to select cutting algorithm
-        const char* algoPreview = (state.selectedCutAlgorithm == CutAlgorithm::Standard) ? "Standard (cut_at_plane)" : "Linear Search";
-        if (ImGui::BeginCombo("Cutting Algorithm", algoPreview)) {
-            if (ImGui::Selectable("Standard (cut_at_plane)", state.selectedCutAlgorithm == CutAlgorithm::Standard)) {
-                state.selectedCutAlgorithm = CutAlgorithm::Standard;
-            }
-            if (ImGui::Selectable("Linear Search", state.selectedCutAlgorithm == CutAlgorithm::LinearSearch)) {
-                state.selectedCutAlgorithm = CutAlgorithm::LinearSearch;
-            }
-            ImGui::EndCombo();
-        }
-
         if (ImGui::Button("Identify Concave Faces")) {
             std::vector<bool> isConcave = mesh_utils::identify_concave_faces(state.mesh);
             std::vector<double> scalarVal(state.mesh.n_faces());
@@ -144,23 +132,6 @@ void render(AppState& state) {
                 scalarVal[i] = isConcave[i] ? 1.0 : 0.0;
             }
             state.oSMesh->addFaceScalarQuantity("isConcave", scalarVal)->setEnabled(true);
-        }
-
-        if (ImGui::Button("Generate Random Cutting Plane")) {
-            mesh_utils::generate_random_bbox_plane(state);
-        }
-
-        if (state.hasActiveCutPlane) {
-            ImGui::SameLine();
-            if (ImGui::Button("Cut")) {
-                if (state.selectedCutAlgorithm == CutAlgorithm::Standard) {
-                    mesh_utils::cut_at_plane(state, state.mesh, state.activeCutPlane, true);
-                } else {
-                    print::warning("Not implemented yet");
-                }
-                polyscope::removeSurfaceMesh("Clipped Random Plane");
-                state.hasActiveCutPlane = false;
-            }
         }
 
         if (ImGui::Button("Generate Kernel")) {

@@ -284,11 +284,7 @@ void step_kernel(AppState& state, bool updateVisuals = true) {
     }
 
     // Perform the cut
-    if (state.selectedCutAlgorithm == CutAlgorithm::Standard) {
-        mesh_utils::cut_at_plane(state, state.kHat, plane, state.exactSupportPlanes[state.currentPlaneIdx], state.updateVisuals);
-    } else {
-        mesh_utils::cut_at_plane_linear(state, state.kHat, plane, state.exactSupportPlanes[state.currentPlaneIdx], state.updateVisuals);
-    }
+    mesh_utils::cut_at_plane_exact(state, state.kHat, plane, state.exactSupportPlanes[state.currentPlaneIdx], state.updateVisuals);
     
     state.currentPlaneIdx++;
 

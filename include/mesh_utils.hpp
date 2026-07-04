@@ -20,11 +20,6 @@ namespace mesh_utils {
 
     // Plane-Mesh Cutting
     pmp::Halfedge edge_descent(pmp::SurfaceMesh& mesh, const Plane& plane);
-    pmp::Halfedge edge_descent(pmp::SurfaceMesh& mesh, const Plane& plane, const ExactPlane& exactPlane);
-    void cut_at_plane(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane, bool updateVisuals);
-    void cut_at_plane(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane, const ExactPlane& exactPlane, bool updateVisuals);
-    void cut_at_plane_linear(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane, const ExactPlane& exactPlane, bool updateVisuals);
-    // void cut_at_plane_linear_search(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane, bool updateVisuals);
-
-    
+    pmp::Halfedge edge_descent_exact(pmp::SurfaceMesh& mesh, const Plane& plane, const ExactPlane& exactPlane);
+    void cut_at_plane_exact(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane, const ExactPlane& exactPlane, bool updateVisuals);
 }
