@@ -351,62 +351,59 @@ pmp::Halfedge edge_descent(pmp::SurfaceMesh& mesh, const Plane& plane) {
 
 pmp::Halfedge edge_descent(pmp::SurfaceMesh& mesh, const Plane& plane, const ExactPlane& exactPlane) {
     if (mesh.is_empty()) return pmp::Halfedge();
-
+    
     auto exact_points = mesh.get_vertex_property<ExactPoint>("v:exact_pos");
-
-    // Lambda helper to check if a vertex is inside or on the plane
-    auto is_inside_or_on = [&](pmp::Vertex v) {
-        if (exact_points) {
-            return ipg::classify(exact_points[v], exactPlane) <= 0;
-        } else {
-            return plane.distance(mesh.position(v)) <= EPSILON;
-        }
+    auto get_class = [&](pmp::Vertex v) {
+        if (exact_points) return static_cast<int>(ipg::classify(exact_points[v], exactPlane));
+        float d = plane.distance(mesh.position(v));
+        return (d > EPSILON) ? 1 : ((d < -EPSILON) ? -1 : 0);
     };
 
-    pmp::Vertex current_v = *mesh.vertices_begin();  // start from an arbitrary vertex
+    pmp::Vertex current_v = *mesh.vertices_begin();
     float current_dist = plane.distance(mesh.position(current_v));
-    bool current_state = is_inside_or_on(current_v);
-
-    // Keep track of visited vertices to prevent infinite loops
+    int current_class = get_class(current_v);
+    
     std::vector<bool> visited(mesh.n_vertices(), false);
 
-    while(current_v.is_valid()) {
+    while (current_v.is_valid()) {
         visited[current_v.idx()] = true;
-
         pmp::Vertex bestNeighbor;
-        float min_abs_dist = std::abs(current_dist);
+        float best_dist = current_dist;
         bool foundCloser = false;
 
         for (auto he : mesh.halfedges(current_v)) {
             pmp::Vertex neighbor = mesh.to_vertex(he);
+            int neighbor_class = get_class(neighbor);
 
-            if (current_state != is_inside_or_on(neighbor)) {
-                return he; // Found edge crossing the plane
+            // Crossing detected! (Transitions between strictly positive/negative, or touching)
+            if ((current_class <= 0 && neighbor_class > 0) || (current_class > 0 && neighbor_class <= 0)) {
+                return he; 
             }
 
-            // Look for direction which brings us closer to the plane
             if (!visited[neighbor.idx()]) {
                 float neighbor_dist = plane.distance(mesh.position(neighbor));
-                if (std::abs(neighbor_dist) < min_abs_dist) {
-                    min_abs_dist = std::abs(neighbor_dist);
+                
+                // Move monotonically towards the plane (dist == 0)
+                bool moves_closer = false;
+                if (current_dist > 0 && neighbor_dist < best_dist) moves_closer = true;
+                if (current_dist < 0 && neighbor_dist > best_dist) moves_closer = true;
+
+                if (moves_closer) {
+                    best_dist = neighbor_dist;
                     bestNeighbor = neighbor;
                     foundCloser = true;
                 }
             }
         }
 
-        // No vertex brings us closer to the plane, so we are at a local minimum
-        if (!foundCloser) {
-            print::warning("Edge descent hit a local minimum.");
-            return pmp::Halfedge();
-        }
+        if (!foundCloser) break; // Local extremum reached without crossing
 
         current_v = bestNeighbor;
-        current_dist = plane.distance(mesh.position(current_v));
-        current_state = is_inside_or_on(current_v);
+        current_dist = best_dist;
+        current_class = get_class(current_v);
     }
-
-    return pmp::Halfedge(); // No crossing edge found
+    
+    return pmp::Halfedge(); // No crossing found (plane completely misses)
 }
 
 
@@ -616,6 +613,19 @@ void cut_at_plane_linear(AppState& state, pmp::SurfaceMesh& mesh, const Plane& p
 
     auto exact_points = mesh.get_vertex_property<ExactPoint>("v:exact_pos");
     auto exact_planes = mesh.get_face_property<ExactPlane>("f:exact_plane");
+
+    // Edge Descent
+    pmp::Halfedge start_he = edge_descent(mesh, plane, exactPlane);
+    if (!start_he.is_valid()) {
+        // No crossing edge found, check if mesh is entirely on one side of the plane
+        pmp::Vertex first = *mesh.vertices_begin();
+        int first_class = ipg::classify(exact_points[first], exactPlane);
+        if (first_class > 0) {
+            print::info("All vertices are on the positive side of the plane. Discarding kernel.");
+            mesh.clear();
+        }
+        return;
+    }
 
     // 1. Exact Vertex Classification (-1: Keep, 0: On Plane, 1: Discard)
     std::map<pmp::Vertex, int> v_class;
