@@ -439,6 +439,14 @@ void cut_at_plane_exact(AppState& state, pmp::SurfaceMesh& mesh, const Plane& pl
     std::map<pmp::Vertex, int> v_class;
     for (auto v : mesh.vertices()) v_class[v] = ipg::classify(exact_points[v], exactPlane);
 
+    // Check if any AABB extreme vertices are about to be discarded
+    bool min_discarded[3] = {false, false, false};
+    bool max_discarded[3] = {false, false, false};
+    for (int i = 0; i < 3; i++) {
+        if (state.aabb_v_min[i].is_valid() && v_class[state.aabb_v_min[i]] > 0) min_discarded[i] = true;
+        if (state.aabb_v_max[i].is_valid() && v_class[state.aabb_v_max[i]] > 0) max_discarded[i] = true;
+    }
+
     // Map kept vertices (and track ones exactly on the plane)
     pmp::SurfaceMesh newMesh;
     auto new_exact_points = newMesh.add_vertex_property<ExactPoint>("v:exact_pos");
@@ -550,6 +558,61 @@ void cut_at_plane_exact(AppState& state, pmp::SurfaceMesh& mesh, const Plane& pl
                 }
             }
         }
+    }
+
+    // Update AABB tracking (move bounds, see paper)
+    pmp::Vertex new_aabb_v_min[3];
+    pmp::Vertex new_aabb_v_max[3];
+    for (int i = 0; i < 3; i++) {
+        // Map retained extreme vertices to the new mesh
+        if (!min_discarded[i] && state.aabb_v_min[i].is_valid()) {
+            new_aabb_v_min[i] = vertexMap[state.aabb_v_min[i]];
+        } 
+        if (!max_discarded[i] && state.aabb_v_max[i].is_valid()) {
+            new_aabb_v_max[i] = vertexMap[state.aabb_v_max[i]]; 
+        }
+    }
+
+    // Scan the newly generated cut boundary (capVertices) for replacement extremes
+    if (!capVertices.empty()) {
+        for (int i = 0; i < 3; ++i) {
+            if (min_discarded[i]) {
+                int64_t best_val = std::numeric_limits<int64_t>::max();
+                pmp::Vertex best_ver;
+                for (auto cap_v : capVertices) {
+                    ExactPoint p = new_exact_points[cap_v];
+                    double val = static_cast<double>(p.comp(i)) / static_cast<double>(p.w);
+                    int64_t floor = static_cast<int64_t>(std::floor(val));
+                    if (floor < best_val) {
+                        best_val = floor;
+                        best_ver = cap_v;
+                    }
+                }
+                new_aabb_v_min[i] = best_ver;
+                state.aabb_min[i] = best_val;
+            }
+            if (max_discarded[i]) {
+                int64_t best_val = std::numeric_limits<int64_t>::lowest();
+                pmp::Vertex best_ver;
+                for (auto cap_v : capVertices) {
+                    ExactPoint p = new_exact_points[cap_v];
+                    double val = static_cast<double>(p.comp(i)) / static_cast<double>(p.w);
+                    int64_t ceil = static_cast<int64_t>(std::ceil(val));
+                    if (ceil > best_val) {
+                        best_val = ceil;
+                        best_ver = cap_v;
+                    }
+                }
+                new_aabb_v_max[i] = best_ver;
+                state.aabb_max[i] = best_val;
+            }
+        }
+    }
+
+    // Save back to state
+    for (int i = 0; i < 3; ++i) {
+        state.aabb_v_min[i] = new_aabb_v_min[i];
+        state.aabb_v_max[i] = new_aabb_v_max[i];
     }
     
     mesh = newMesh;

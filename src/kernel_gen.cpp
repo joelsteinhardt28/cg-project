@@ -38,7 +38,9 @@ namespace {
 }
 
 
-// * Given a bounding box, construct a surface quad mesh representing its axis-aligned bounding box (AABB).
+/**
+ *  Given a bounding box, construct a surface quad mesh representing its axis-aligned bounding box (AABB).
+ */
 pmp::SurfaceMesh construct_aabb_mesh(pmp::BoundingBox& bbox) {
     pmp::SurfaceMesh aabb;
     auto exactPoints = aabb.add_vertex_property<ExactPoint>("v:exact_pos");
@@ -94,6 +96,35 @@ pmp::SurfaceMesh construct_aabb_mesh(pmp::BoundingBox& bbox) {
     return aabb;
 }
 
+/**
+ * Classifies the integer AABB of the intermediate kernel against the given supporting plane.
+ * Returns -1 if the AABB is fully in the negative half-space (can skip cut).
+ * Returns 1 if the AABB is fully in the positive half-space (kernel is destroyed).
+ * Returns 0 if the AABB intersects the plane (cut is needed).
+ */
+int classify_aabb(const AppState& state, const ExactPlane& exactPlane) {
+    // bits_plane_d + 1 handles the max potential sum without overflow (see paper)
+    constexpr int bits_out = ExactGeom::bits_plane_d + 1;
+
+    auto c_x = state.aabb_max[0] + state.aabb_min[0];
+    auto c_y = state.aabb_max[1] + state.aabb_min[1];
+    auto c_z = state.aabb_max[2] + state.aabb_min[2];
+    auto s_x = state.aabb_max[0] - state.aabb_min[0];
+    auto s_y = state.aabb_max[1] - state.aabb_min[1];
+    auto s_z = state.aabb_max[2] - state.aabb_min[2];
+
+    auto d2 = exactPlane.d << 1;  // multiply by 2 to avoid fraction
+    auto dot_c = ipg::mul<bits_out>(c_x, exactPlane.a) + ipg::mul<bits_out>(c_y, exactPlane.b) + ipg::mul<bits_out>(c_z, exactPlane.c);
+    auto dot_s = ipg::mul<bits_out>(s_x, ipg::abs(exactPlane.a)) + ipg::mul<bits_out>(s_y, ipg::abs(exactPlane.b)) + ipg::mul<bits_out>(s_z, ipg::abs(exactPlane.c));
+
+    auto max_value = dot_c + dot_s + d2;
+    auto min_value = dot_c - dot_s + d2;
+
+    if (tg::detail::less_than_zero(max_value) || (max_value == 0)) return -1;
+    if (!tg::detail::less_than_zero(min_value) && (min_value != 0)) return 1;
+    return 0;
+}
+
 
 /**
  * Intiializes the kernel stepping process by first checking for early termination conditions, then performing
@@ -116,7 +147,29 @@ void init_kernel_stepping(AppState& state) {
     pmp::BoundingBox bbox = pmp::bounds(state.mesh);
     state.kHat = construct_aabb_mesh(bbox);
 
-    // Identify concave faces
+    // * Intialize AABB tracking for fast intersection tests
+    for (int i = 0; i < 3; ++i) {
+        state.aabb_min[i] = std::numeric_limits<int64_t>::max();
+        state.aabb_max[i] = std::numeric_limits<int64_t>::lowest();
+    }
+    auto exactPoints_k = state.kHat.get_vertex_property<ExactPoint>("v:exact_pos");
+    for (auto v : state.kHat.vertices()) {
+        ExactPoint p = exactPoints_k[v];
+        for (int i = 0; i < 3; ++i) {
+            int64_t val = static_cast<int64_t>(p.comp(i));  // w=1 for initial AABB
+            if (val < state.aabb_min[i]) {
+                state.aabb_min[i] = val;
+                state.aabb_v_min[i] = v;
+            }
+            if (val > state.aabb_max[i]) {
+                state.aabb_max[i] = val;
+                state.aabb_v_max[i] = v;
+            }
+        }
+    }
+    state.skippedCuts = 0;  // reset
+
+    // * Identify concave faces
     std::vector<bool> isConcaveFace = mesh_utils::identify_concave_faces(state.mesh);
 
     // * Concavity early termination
@@ -277,6 +330,23 @@ void step_kernel(AppState& state, bool updateVisuals = true) {
     }
 
     Plane& plane = state.supportPlanes[state.currentPlaneIdx];
+    ExactPlane& exactPlane = state.exactSupportPlanes[state.currentPlaneIdx];
+
+    // Fast AABB Intersection check
+    int aabb_class = classify_aabb(state, exactPlane);
+    if (aabb_class == -1) {
+        // fully in negative half-space, skip cut
+        print::info("AABB Check: Plane does not intersect. Skipping cut.");
+        state.skippedCuts++;
+        state.currentPlaneIdx++;
+        return;
+    } else if (aabb_class == 1) {
+        // fully in positive half-space, kernel is destroyed
+        print::info("AABB Check: Kernel entirely discarded. Kernel is empty.");
+        state.kHat.clear();
+        state.currentPlaneIdx = state.supportPlanes.size();  // terminate
+        return;
+    }
     
     // Visualize the current support plane
     if (updateVisuals) {

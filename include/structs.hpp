@@ -53,12 +53,6 @@ struct Plane {
 };
 
 
-enum class CutAlgorithm {
-    Standard,
-    LinearSearch
-};
-
-
 /**
  *  Application state struct to hold shared data across the application
  */
@@ -77,7 +71,6 @@ struct AppState {
     std::vector<Point> bboxVertices;
 
     // * Kernel generation state
-    CutAlgorithm selectedCutAlgorithm = CutAlgorithm::Standard;
     bool isSteppingKernel = false;
     int currentPlaneIdx = 0;
     std::vector<Plane> supportPlanes;
@@ -87,6 +80,13 @@ struct AppState {
 
     // * Application flags
     bool updateVisuals = false;
+
+    // * AABB Fast Intersection Tracking
+    int64_t aabb_min[3] = {0, 0, 0};
+    int64_t aabb_max[3] = {0, 0, 0};
+    pmp::Vertex aabb_v_min[3];
+    pmp::Vertex aabb_v_max[3];
+    int skippedCuts = 0;
 
     // * IO
     std::string targetDir = "./off_files";

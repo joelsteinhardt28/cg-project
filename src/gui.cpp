@@ -147,8 +147,15 @@ void render(AppState& state) {
             if (ImGui::Button("Start Kernel Stepping")) {
                 init_kernel_stepping(state);
             }
+            if (state.kSMesh) {
+                ImGui::Separator();
+                ImGui::Text("Kernel Generation Finished");
+                ImGui::Text("Total Planes Processed: %zu", state.supportPlanes.size());
+                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Cuts skipped (AABB Check): %d", state.skippedCuts);
+            }
         } else {
             ImGui::Text("Step: %d / %zu", state.currentPlaneIdx, state.supportPlanes.size());
+            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Cuts Skipped (AABB Check): %d", state.skippedCuts);
             if (ImGui::Button("Next Step")) {
                 step_kernel(state, state.updateVisuals);
             }
