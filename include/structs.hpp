@@ -5,6 +5,9 @@
 
 #include <glm/glm.hpp>
 #include <pmp/surface_mesh.h>
+#include <integer-plane-geometry/geometry.hh>
+#include <integer-plane-geometry/point.hh>
+#include <integer-plane-geometry/plane.hh>
 
 
 // Forward declarations
@@ -16,6 +19,10 @@ namespace polyscope {
 using Point = pmp::vec3;
 using Face = std::vector<size_t>;
 using Normal = pmp::vec3;
+
+using ExactGeom = ipg::geometry256_x64_n45;
+using ExactPoint = ipg::point4<ExactGeom>;
+using ExactPlane = ipg::plane<ExactGeom>;
 
 using Color = glm::vec3; // RGB color, each component in [0,1]
 
@@ -46,12 +53,6 @@ struct Plane {
 };
 
 
-enum class CutAlgorithm {
-    Standard,
-    LinearSearch
-};
-
-
 /**
  *  Application state struct to hold shared data across the application
  */
@@ -70,15 +71,22 @@ struct AppState {
     std::vector<Point> bboxVertices;
 
     // * Kernel generation state
-    CutAlgorithm selectedCutAlgorithm = CutAlgorithm::Standard;
     bool isSteppingKernel = false;
     int currentPlaneIdx = 0;
     std::vector<Plane> supportPlanes;
+    std::vector<ExactPlane> exactSupportPlanes;
     Plane activeCutPlane;
     bool hasActiveCutPlane = false;
 
     // * Application flags
     bool updateVisuals = false;
+
+    // * AABB Fast Intersection Tracking
+    int64_t aabb_min[3] = {0, 0, 0};
+    int64_t aabb_max[3] = {0, 0, 0};
+    pmp::Vertex aabb_v_min[3];
+    pmp::Vertex aabb_v_max[3];
+    int skippedCuts = 0;
 
     // * IO
     std::string targetDir = "./off_files";

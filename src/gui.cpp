@@ -66,11 +66,41 @@ void render(AppState& state) {
                     pmp::SurfaceMesh tempMesh;
                     print::info("Reading mesh from: " + selectedPath.string());
                     pmp::read(tempMesh, selectedPath);
+
+                    // Properties for ipg
+                    auto exactPoints = tempMesh.add_vertex_property<ExactPoint>("v:exact_pos");
+                    auto exactPlanes = tempMesh.add_face_property<ExactPlane>("f:exact_plane");
+
+                    // Scale and snap vertex positions to integer grid and store in pmp property
+                    for (auto v : tempMesh.vertices()) {
+                        pmp::Point p = tempMesh.position(v);
+                        tg::ipos3 ipos(
+                            static_cast<int64_t>(p[0] * globalSettings::scaleFactor),
+                            static_cast<int64_t>(p[1] * globalSettings::scaleFactor),
+                            static_cast<int64_t>(p[2] * globalSettings::scaleFactor)
+                        );
+                        exactPoints[v] = ExactPoint(ipos);
+                    }
+
+                    for (auto face : tempMesh.faces()) {
+                        auto it = tempMesh.vertices(face).begin();
+                        ExactPoint vA = exactPoints[*it]; ++it;
+                        ExactPoint vB = exactPoints[*it]; ++it;
+                        ExactPoint vC = exactPoints[*it];
+
+                        tg::pos<3, ExactGeom::pos_scalar_t> pA(int64_t(vA.x), int64_t(vA.y), int64_t(vA.z));
+                        tg::pos<3, ExactGeom::pos_scalar_t> pB(int64_t(vB.x), int64_t(vB.y), int64_t(vB.z));
+                        tg::pos<3, ExactGeom::pos_scalar_t> pC(int64_t(vC.x), int64_t(vC.y), int64_t(vC.z));
+
+                        exactPlanes[face] = ExactPlane::from_points(pA, pB, pC);
+                    }
+
                     state.mesh = std::move(tempMesh);
                     print::info("Mesh loaded: " + std::to_string(state.mesh.n_vertices()) + " vertices, " + std::to_string(state.mesh.n_faces()) + " faces.");
 
                     state.oSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::mesh), state.mesh);
                     state.oSMesh->setSurfaceColor(constants::colors::mesh);
+                    state.oSMesh->setTransparency(constants::transparencies::mesh);
                     state.pc = mesh_utils::register_pmp_pc(std::string(constants::polyNames::pc), state.mesh);
                     if (!state.mesh.is_empty()) state.meshLoaded = true;
 
@@ -96,18 +126,6 @@ void render(AppState& state) {
 
 
     if (state.meshLoaded) {
-        // * Dropdown to select cutting algorithm
-        const char* algoPreview = (state.selectedCutAlgorithm == CutAlgorithm::Standard) ? "Standard (cut_at_plane)" : "Linear Search";
-        if (ImGui::BeginCombo("Cutting Algorithm", algoPreview)) {
-            if (ImGui::Selectable("Standard (cut_at_plane)", state.selectedCutAlgorithm == CutAlgorithm::Standard)) {
-                state.selectedCutAlgorithm = CutAlgorithm::Standard;
-            }
-            if (ImGui::Selectable("Linear Search", state.selectedCutAlgorithm == CutAlgorithm::LinearSearch)) {
-                state.selectedCutAlgorithm = CutAlgorithm::LinearSearch;
-            }
-            ImGui::EndCombo();
-        }
-
         if (ImGui::Button("Identify Concave Faces")) {
             std::vector<bool> isConcave = mesh_utils::identify_concave_faces(state.mesh);
             std::vector<double> scalarVal(state.mesh.n_faces());
@@ -115,23 +133,6 @@ void render(AppState& state) {
                 scalarVal[i] = isConcave[i] ? 1.0 : 0.0;
             }
             state.oSMesh->addFaceScalarQuantity("isConcave", scalarVal)->setEnabled(true);
-        }
-
-        if (ImGui::Button("Generate Random Cutting Plane")) {
-            mesh_utils::generate_random_bbox_plane(state);
-        }
-
-        if (state.hasActiveCutPlane) {
-            ImGui::SameLine();
-            if (ImGui::Button("Cut")) {
-                if (state.selectedCutAlgorithm == CutAlgorithm::Standard) {
-                    mesh_utils::cut_at_plane(state, state.mesh, state.activeCutPlane, true);
-                } else {
-                    mesh_utils::cut_at_plane_linear_search(state, state.mesh, state.activeCutPlane, true);
-                }
-                polyscope::removeSurfaceMesh("Clipped Random Plane");
-                state.hasActiveCutPlane = false;
-            }
         }
 
         if (ImGui::Button("Generate Kernel")) {
@@ -147,8 +148,15 @@ void render(AppState& state) {
             if (ImGui::Button("Start Kernel Stepping")) {
                 init_kernel_stepping(state);
             }
+            if (state.kSMesh) {
+                ImGui::Separator();
+                ImGui::Text("Kernel Generation Finished");
+                ImGui::Text("Total Planes Processed: %zu", state.supportPlanes.size());
+                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Cuts skipped (AABB Check): %d", state.skippedCuts);
+            }
         } else {
             ImGui::Text("Step: %d / %zu", state.currentPlaneIdx, state.supportPlanes.size());
+            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Cuts Skipped (AABB Check): %d", state.skippedCuts);
             if (ImGui::Button("Next Step")) {
                 step_kernel(state, state.updateVisuals);
             }

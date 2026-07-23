@@ -7,6 +7,7 @@
 
 namespace globalSettings {
     inline constexpr bool showDebugLogs = false;
+    inline constexpr int64_t scaleFactor = 1e6;  // ! TODO: Make adjustable
 }
 
 namespace constants::colors {
@@ -18,6 +19,7 @@ namespace constants::colors {
 }
 
 namespace constants::transparencies {
+    inline constexpr float mesh             = 0.3f;
     inline constexpr float kernel           = 0.6f;
     inline constexpr float cutPlane         = 0.6f;
 }

@@ -4,6 +4,7 @@
 #include "polyscope/polyscope.h"
 
 #include "gui.hpp"
+#include <integer-plane-geometry/geometry.hh>
 
 // Application state for shared data
 AppState state;
