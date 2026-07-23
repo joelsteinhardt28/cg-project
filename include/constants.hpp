@@ -19,6 +19,7 @@ namespace constants::colors {
 }
 
 namespace constants::transparencies {
+    inline constexpr float mesh             = 0.3f;
     inline constexpr float kernel           = 0.6f;
     inline constexpr float cutPlane         = 0.6f;
 }

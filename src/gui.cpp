@@ -100,6 +100,7 @@ void render(AppState& state) {
 
                     state.oSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::mesh), state.mesh);
                     state.oSMesh->setSurfaceColor(constants::colors::mesh);
+                    state.oSMesh->setTransparency(constants::transparencies::mesh);
                     state.pc = mesh_utils::register_pmp_pc(std::string(constants::polyNames::pc), state.mesh);
                     if (!state.mesh.is_empty()) state.meshLoaded = true;
 

@@ -204,7 +204,7 @@ void init_kernel_stepping(AppState& state) {
             auto dp = exactPlanes[face].to_dplane();
             facePlanes[face.idx()] = Plane{
                 pmp::vec3(dp.normal.x, dp.normal.y, dp.normal.z),
-                static_cast<float>(-dp.dis)
+                static_cast<float>(-dp.dis / globalSettings::scaleFactor)
             };
             validPlane[face.idx()] = true;
         }
