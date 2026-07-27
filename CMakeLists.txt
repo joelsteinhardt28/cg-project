@@ -121,8 +121,11 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(typed-geometry)
 set_target_properties(typed-geometry PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:typed-geometry,INTERFACE_INCLUDE_DIRECTORIES>)
 
+find_package(OpenMP REQUIRED)
+
 # Create an executable
 add_executable(project src/main.cpp src/io.cpp src/gui.cpp src/mesh_utils.cpp src/kernel_gen.cpp src/toolbox.cpp)
+
 if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
   target_compile_options(project PRIVATE -Werror)
 endif()
@@ -135,4 +138,11 @@ target_include_directories(project PRIVATE "${polyscope_SOURCE_DIR}/deps/json/in
 target_include_directories(project PRIVATE "${pmp_SOURCE_DIR}/src")
 
 # Link to dependencies
-target_link_libraries(project PRIVATE polyscope portable_file_dialogs pmp clean-core typed-geometry)
+target_link_libraries(project PRIVATE 
+  polyscope 
+  portable_file_dialogs 
+  pmp 
+  clean-core 
+  typed-geometry
+  OpenMP::OpenMP_CXX
+)

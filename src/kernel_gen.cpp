@@ -1,5 +1,7 @@
 #include <integer-plane-geometry/classify.hh>
 #include <integer-plane-geometry/are_parallel.hh>
+#include <omp.h>
+#include <chrono>
 
 #include "kernel_gen.hpp"
 
@@ -377,6 +379,196 @@ void generate_kernel(AppState& state) {
     }
 
     // Final visual update
+    if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
+    state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
+    state.kSMesh->setSurfaceColor(constants::colors::kernel);
+    state.kSMesh->setTransparency(constants::transparencies::kernel);
+}
+
+
+void generate_kernel_parallel(AppState& state) {
+    if (!state.meshLoaded || state.mesh.is_empty()) return;
+
+    print::info("Starting parallel kernel generation...");
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    pmp::BoundingBox bbox = pmp::bounds(state.mesh);
+    pmp::Point center = bbox.center();
+
+    // 1. Identify valid planes and group coplanar faces
+    size_t numFaces = state.mesh.n_faces();
+    std::vector<Plane> facePlanes(numFaces);
+    std::vector<bool> validPlane(numFaces, false);
+    auto exactPoints = state.mesh.get_vertex_property<ExactPoint>("v:exact_pos");
+    auto exactPlanes = state.mesh.get_face_property<ExactPlane>("f:exact_plane");
+
+    for (auto face : state.mesh.faces()) {
+        auto it = state.mesh.vertices(face).begin();
+        ExactPoint vA = exactPoints[*it]; ++it;
+        ExactPoint vB = exactPoints[*it]; ++it;
+        ExactPoint vC = exactPoints[*it];
+        
+        tg::pos<3, ExactGeom::pos_scalar_t> pA(int64_t(vA.x), int64_t(vA.y), int64_t(vA.z));
+        tg::pos<3, ExactGeom::pos_scalar_t> pB(int64_t(vB.x), int64_t(vB.y), int64_t(vB.z));
+        tg::pos<3, ExactGeom::pos_scalar_t> pC(int64_t(vC.x), int64_t(vC.y), int64_t(vC.z));
+        exactPlanes[face] = ExactPlane::from_points(pA, pB, pC);
+
+        if (exactPlanes[face].is_valid()) {
+            auto dp = exactPlanes[face].to_dplane();
+            facePlanes[face.idx()] = Plane{
+                pmp::vec3(dp.normal.x, dp.normal.y, dp.normal.z),
+                static_cast<float>(-dp.dis / globalSettings::scaleFactor)
+            };
+            validPlane[face.idx()] = true;
+        }
+    }
+
+    UnionFind uf(numFaces);
+    for (auto edge : state.mesh.edges()) {
+        if (state.mesh.is_boundary(edge)) continue;
+        pmp::Face f0 = state.mesh.face(state.mesh.halfedge(edge, 0));
+        pmp::Face f1 = state.mesh.face(state.mesh.halfedge(edge, 1));
+        if (validPlane[f0.idx()] && validPlane[f1.idx()]) {
+            const ExactPlane& ep0 = exactPlanes[f0];
+            const ExactPlane& ep1 = exactPlanes[f1];
+            bool are_identical = false;
+            if (ipg::are_parallel(ep0, ep1)) {
+                if (!tg::is_zero(ep0.a)) {
+                    are_identical = (ipg::mul<192>(ep0.a, ep1.d) == ipg::mul<192>(ep1.a, ep0.d));
+                } else if (!tg::is_zero(ep0.b)) {
+                    are_identical = (ipg::mul<192>(ep0.b, ep1.d) == ipg::mul<192>(ep1.b, ep0.d));
+                } else {
+                    are_identical = (ipg::mul<192>(ep0.c, ep1.d) == ipg::mul<192>(ep1.c, ep0.d));
+                }
+            }
+            if (are_identical) uf.unite(f0.idx(), f1.idx());
+        }
+    }
+
+    // 2. Divide planes into octants based on root face centroids
+    std::vector<Plane> octant_planes[8];
+    std::vector<ExactPlane> octant_exact[8];
+
+    for (auto face : state.mesh.faces()) {
+        if (!validPlane[face.idx()]) continue;
+        if (uf.find(face.idx()) == static_cast<int>(face.idx())) {
+            pmp::Point centroid(0,0,0);
+            int v_count = 0;
+            for (auto v : state.mesh.vertices(face)) {
+                centroid += state.mesh.position(v);
+                v_count++;
+            }
+            centroid /= static_cast<float>(v_count);
+
+            int octant = 0;
+            if (centroid[0] > center[0]) octant |= 1;
+            if (centroid[1] > center[1]) octant |= 2;
+            if (centroid[2] > center[2]) octant |= 4;
+
+            octant_planes[octant].push_back(facePlanes[face.idx()]);
+            octant_exact[octant].push_back(exactPlanes[face]);
+        }
+    }
+
+    // 3. Process each octant in parallel
+    std::vector<pmp::SurfaceMesh> local_kernels(8);
+    bool empty_kernel_detected = false;
+
+    #pragma omp parallel for schedule(dynamic)
+    for (int i = 0; i < 8; ++i) {
+        if (empty_kernel_detected) continue;
+
+        AppState local_state;
+        local_state.kHat = construct_aabb_mesh(bbox);
+
+        // Initialize local AABB tracking
+        for (int j = 0; j < 3; ++j) {
+            local_state.aabb_min[j] = std::numeric_limits<int64_t>::max();
+            local_state.aabb_max[j] = std::numeric_limits<int64_t>::lowest();
+        }
+        auto exactPoints_k = local_state.kHat.get_vertex_property<ExactPoint>("v:exact_pos");
+        for (auto v : local_state.kHat.vertices()) {
+            ExactPoint p = exactPoints_k[v];
+            for (int j = 0; j < 3; ++j) {
+                int64_t val = static_cast<int64_t>(p.comp(j));
+                if (val < local_state.aabb_min[j]) { local_state.aabb_min[j] = val; local_state.aabb_v_min[j] = v; }
+                if (val > local_state.aabb_max[j]) { local_state.aabb_max[j] = val; local_state.aabb_v_max[j] = v; }
+            }
+        }
+
+        for (size_t p = 0; p < octant_planes[i].size(); ++p) {
+            int aabb_class = classify_aabb(local_state, octant_exact[i][p]);
+            if (aabb_class == -1) continue;
+            if (aabb_class == 1) {
+                local_state.kHat.clear();
+                empty_kernel_detected = true;
+                break;
+            }
+
+            mesh_utils::cut_at_plane_exact(local_state, local_state.kHat, octant_planes[i][p], octant_exact[i][p], false);
+            if (local_state.kHat.is_empty()) {
+                empty_kernel_detected = true;
+                break;
+            }
+        }
+        local_kernels[i] = std::move(local_state.kHat);
+    }
+
+    // 4. Merge surviving planes and compute final intersection
+    if (empty_kernel_detected) {
+        state.kHat.clear();
+    } else {
+        std::vector<Plane> final_planes;
+        std::vector<ExactPlane> final_exact;
+
+        for (int i = 0; i < 8; ++i) {
+            auto exact_props = local_kernels[i].get_face_property<ExactPlane>("f:exact_plane");
+            for (auto f : local_kernels[i].faces()) {
+                ExactPlane ep = exact_props[f];
+                auto dp = ep.to_dplane();
+                Plane p{
+                    pmp::vec3(dp.normal.x, dp.normal.y, dp.normal.z),
+                    static_cast<float>(-dp.dis / globalSettings::scaleFactor)
+                };
+                final_planes.push_back(p);
+                final_exact.push_back(ep);
+            }
+        }
+
+        // Final sequential cut on original AABB
+        state.kHat = construct_aabb_mesh(bbox);
+        for (int j = 0; j < 3; ++j) {
+            state.aabb_min[j] = std::numeric_limits<int64_t>::max();
+            state.aabb_max[j] = std::numeric_limits<int64_t>::lowest();
+        }
+        auto exactPoints_k = state.kHat.get_vertex_property<ExactPoint>("v:exact_pos");
+        for (auto v : state.kHat.vertices()) {
+            ExactPoint pt = exactPoints_k[v];
+            for (int j = 0; j < 3; ++j) {
+                int64_t val = static_cast<int64_t>(pt.comp(j));
+                if (val < state.aabb_min[j]) { state.aabb_min[j] = val; state.aabb_v_min[j] = v; }
+                if (val > state.aabb_max[j]) { state.aabb_max[j] = val; state.aabb_v_max[j] = v; }
+            }
+        }
+
+        for (size_t p = 0; p < final_planes.size(); ++p) {
+            int aabb_class = classify_aabb(state, final_exact[p]);
+            if (aabb_class == -1) continue;
+            if (aabb_class == 1) {
+                state.kHat.clear();
+                break;
+            }
+            mesh_utils::cut_at_plane_exact(state, state.kHat, final_planes[p], final_exact[p], false);
+            if (state.kHat.is_empty()) break;
+        }
+    }
+
+    auto end_time = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed = end_time - start_time;
+    state.lastComputeTime = elapsed.count();
+    
+    // Update Polyscope visuals
+    state.isSteppingKernel = false;
     if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
     state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
     state.kSMesh->setSurfaceColor(constants::colors::kernel);

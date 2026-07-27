@@ -17,6 +17,7 @@ namespace mesh_utils {
     void visualize_cut_plane(AppState& state, const Plane& plane);
     void generate_random_bbox_plane(AppState& state);
     std::vector<bool> identify_concave_faces(const pmp::SurfaceMesh& mesh);
+    void visualize_face_normals(AppState& state);
 
     // Plane-Mesh Cutting
     pmp::Halfedge edge_descent(pmp::SurfaceMesh& mesh, const Plane& plane);
