@@ -6,7 +6,7 @@
 
 
 namespace globalSettings {
-    inline constexpr bool showAnyLogs = true;
+    inline constexpr bool showAnyLogs = false;
     inline constexpr bool showDebugLogs = false;
     inline constexpr int64_t scaleFactor = 1e6;  // ! TODO: Make adjustable
 }

@@ -170,6 +170,7 @@ void init_kernel_stepping(AppState& state) {
         }
     }
     state.skippedCuts = 0;  // reset
+    mesh_utils::reset_linear_fallback_count();
 
     // * Identify concave faces
     std::vector<bool> isConcaveFace = mesh_utils::identify_concave_faces(state.mesh);
@@ -307,6 +308,7 @@ void step_kernel(AppState& state, bool updateVisuals = true) {
 
     if (static_cast<size_t>(state.currentPlaneIdx) >= state.supportPlanes.size()) {
         print::info("Kernel Generation: All planes processed.");
+        print::info("Kernel generation complete. Total linear fallbacks in edge_descent_exact: " + std::to_string(mesh_utils::get_linear_fallback_count()));
         state.isSteppingKernel = false;
 
         // Final visual update
@@ -320,6 +322,7 @@ void step_kernel(AppState& state, bool updateVisuals = true) {
 
     if (state.kHat.is_empty()) {
         print::info("Kernel Generation: Kernel is empty.");
+        print::info("Kernel generation complete. Total linear fallbacks in edge_descent_exact: " + std::to_string(mesh_utils::get_linear_fallback_count()));
         state.isSteppingKernel = false;
 
         // Final visual update
@@ -345,7 +348,9 @@ void step_kernel(AppState& state, bool updateVisuals = true) {
     } else if (aabb_class == 1) {
         // fully in positive half-space, kernel is destroyed
         print::info("AABB Check: Kernel entirely discarded. Kernel is empty.");
+        print::info("Kernel generation complete. Total linear fallbacks in edge_descent_exact: " + std::to_string(mesh_utils::get_linear_fallback_count()));
         state.kHat.clear();
+        state.isSteppingKernel = false;
         state.currentPlaneIdx = state.supportPlanes.size();  // terminate
         return;
     }
@@ -390,6 +395,7 @@ void generate_kernel_parallel(AppState& state) {
     if (!state.meshLoaded || state.mesh.is_empty()) return;
 
     print::info("Starting parallel kernel generation...");
+    mesh_utils::reset_linear_fallback_count();
     auto start_time = std::chrono::high_resolution_clock::now();
 
     // Genus early termination
@@ -635,4 +641,5 @@ void generate_kernel_parallel(AppState& state) {
     state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
     state.kSMesh->setSurfaceColor(constants::colors::kernel);
     state.kSMesh->setTransparency(constants::transparencies::kernel);
+    print::info("Kernel generation complete. Total linear fallbacks in edge_descent_exact: " + std::to_string(mesh_utils::get_linear_fallback_count()));
 }

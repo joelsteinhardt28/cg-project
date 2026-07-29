@@ -1,6 +1,7 @@
 #include "mesh_utils.hpp"
 
 #include <iostream>
+#include <atomic>
 #include <random>
 #include <algorithm>
 #include <integer-plane-geometry/classify.hh>
@@ -14,6 +15,16 @@
 #include <pmp/exceptions.h>
 
 namespace mesh_utils {
+
+static std::atomic<size_t> g_linear_fallback_count{0};
+
+size_t get_linear_fallback_count() {
+    return g_linear_fallback_count.load();
+}
+
+void reset_linear_fallback_count() {
+    g_linear_fallback_count.store(0);
+}
 
 // * HELPER FUNCTIONS * //
 
@@ -492,7 +503,9 @@ pmp::Halfedge edge_descent_exact(pmp::SurfaceMesh& mesh, const Plane& plane, con
         return pmp::Halfedge(); // No crossing found (plane completely misses)
     }
 
+    size_t count = ++g_linear_fallback_count;
     print::warning("Seeded edge descent failed on all seeds. Falling back to linear search for crossing edge.");
+    print::info("Linear fallback in edge_descent_exact triggered (total count: " + std::to_string(count) + ")");
 
     for (auto e : mesh.edges()) {
         pmp::Vertex v0 = mesh.vertex(e, 0);

@@ -23,4 +23,7 @@ namespace mesh_utils {
     pmp::Halfedge edge_descent(pmp::SurfaceMesh& mesh, const Plane& plane, const AppState* state = nullptr);
     pmp::Halfedge edge_descent_exact(pmp::SurfaceMesh& mesh, const Plane& plane, const ExactPlane& exactPlane, const AppState* state = nullptr);
     void cut_at_plane_exact(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane, const ExactPlane& exactPlane, bool updateVisuals);
+
+    size_t get_linear_fallback_count();
+    void reset_linear_fallback_count();
 }
