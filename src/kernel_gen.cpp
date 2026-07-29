@@ -392,10 +392,35 @@ void generate_kernel_parallel(AppState& state) {
     print::info("Starting parallel kernel generation...");
     auto start_time = std::chrono::high_resolution_clock::now();
 
+    // Genus early termination
+    int euler = state.mesh.n_vertices() - state.mesh.n_edges() + state.mesh.n_faces();
+    if (euler < 2) {
+        polyscope::info("Mesh has genus > 0. Kernel is empty.");
+        state.kHat.clear();
+        if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
+        return;
+    }
+
+    // Convex mesh early termination
+    std::vector<bool> isConcaveFace = mesh_utils::identify_concave_faces(state.mesh);
+
+    if (std::none_of(isConcaveFace.begin(), isConcaveFace.end(), [](bool v) { return v; })) {
+        polyscope::info("Mesh has no concave faces. Kernel is the mesh itself.");
+        state.kHat = state.mesh;
+        if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
+        state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
+        state.kSMesh->setSurfaceColor(constants::colors::kernel);
+        state.kSMesh->setTransparency(constants::transparencies::kernel);
+        return;
+    }
+
     pmp::BoundingBox bbox = pmp::bounds(state.mesh);
     pmp::Point center = bbox.center();
 
-    // 1. Identify valid planes and group coplanar faces
+    state.skippedCuts = 0;
+    std::atomic<int> local_skipped_cuts{0};  // Thread-safe counter
+
+    // Identify valid planes and group coplanar faces
     size_t numFaces = state.mesh.n_faces();
     std::vector<Plane> facePlanes(numFaces);
     std::vector<bool> validPlane(numFaces, false);
@@ -445,13 +470,28 @@ void generate_kernel_parallel(AppState& state) {
         }
     }
 
-    // 2. Divide planes into octants based on root face centroids
-    std::vector<Plane> octant_planes[8];
-    std::vector<ExactPlane> octant_exact[8];
+    // Identify concave faces and aggregate concavity for the clustered sets
+    std::vector<bool> isSetConcave(numFaces, false);
+    for (auto face : state.mesh.faces()) {
+        if (!validPlane[face.idx()]) continue;
+        int root = uf.find(face.idx());
+        if (isConcaveFace[face.idx()]) {
+            isSetConcave[root] = true;
+        }
+    }
+
+    // * Divide planes into octants based on root face centroids
+    std::vector<Plane> octant_concave_planes[8];
+    std::vector<ExactPlane> octant_concave_exact[8];
+    std::vector<Plane> octant_convex_planes[8];
+    std::vector<ExactPlane> octant_convex_exact[8];
 
     for (auto face : state.mesh.faces()) {
         if (!validPlane[face.idx()]) continue;
+
+        // Only process the root face of each coplanar cluster
         if (uf.find(face.idx()) == static_cast<int>(face.idx())) {
+            // Calculate the centroid of the face to determine its octant
             pmp::Point centroid(0,0,0);
             int v_count = 0;
             for (auto v : state.mesh.vertices(face)) {
@@ -465,12 +505,29 @@ void generate_kernel_parallel(AppState& state) {
             if (centroid[1] > center[1]) octant |= 2;
             if (centroid[2] > center[2]) octant |= 4;
 
-            octant_planes[octant].push_back(facePlanes[face.idx()]);
-            octant_exact[octant].push_back(exactPlanes[face]);
+            // Route to appropriate octant list based on concavity
+            if (isSetConcave[face.idx()]) {
+                octant_concave_planes[octant].push_back(facePlanes[face.idx()]);
+                octant_concave_exact[octant].push_back(exactPlanes[face]);
+            } else {
+                octant_convex_planes[octant].push_back(facePlanes[face.idx()]);
+                octant_convex_exact[octant].push_back(exactPlanes[face]);
+            }
         }
     }
 
-    // 3. Process each octant in parallel
+    // Merge concave and convex planes for each octant, prioritizing concave planes
+    std::vector<Plane> octant_planes[8];
+    std::vector<ExactPlane> octant_exact[8];
+
+    for (int i = 0; i < 8; ++i) {
+        octant_planes[i].insert(octant_planes[i].end(), octant_concave_planes[i].begin(), octant_concave_planes[i].end());
+        octant_planes[i].insert(octant_planes[i].end(), octant_convex_planes[i].begin(), octant_convex_planes[i].end());
+        octant_exact[i].insert(octant_exact[i].end(), octant_concave_exact[i].begin(), octant_concave_exact[i].end());
+        octant_exact[i].insert(octant_exact[i].end(), octant_convex_exact[i].begin(), octant_convex_exact[i].end());
+    }
+
+    // * Process each octant in parallel
     std::vector<pmp::SurfaceMesh> local_kernels(8);
     bool empty_kernel_detected = false;
 
@@ -498,7 +555,10 @@ void generate_kernel_parallel(AppState& state) {
 
         for (size_t p = 0; p < octant_planes[i].size(); ++p) {
             int aabb_class = classify_aabb(local_state, octant_exact[i][p]);
-            if (aabb_class == -1) continue;
+            if (aabb_class == -1) {
+                local_skipped_cuts++;
+                continue;
+            };
             if (aabb_class == 1) {
                 local_state.kHat.clear();
                 empty_kernel_detected = true;
@@ -514,7 +574,9 @@ void generate_kernel_parallel(AppState& state) {
         local_kernels[i] = std::move(local_state.kHat);
     }
 
-    // 4. Merge surviving planes and compute final intersection
+    state.skippedCuts = local_skipped_cuts.load();
+
+    // * Merge surviving planes and compute final intersection
     if (empty_kernel_detected) {
         state.kHat.clear();
     } else {
@@ -567,7 +629,7 @@ void generate_kernel_parallel(AppState& state) {
     std::chrono::duration<double> elapsed = end_time - start_time;
     state.lastComputeTime = elapsed.count();
     
-    // Update Polyscope visuals
+    // * Update visuals
     state.isSteppingKernel = false;
     if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
     state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
