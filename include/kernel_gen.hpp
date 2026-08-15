@@ -7,6 +7,13 @@
 #include "mesh_utils.hpp"
 
 
+enum class ParallelStrategy {
+    SpatialOctants,
+    SimilarNormals,
+    DissimilarNormals
+};
+
+
 pmp::SurfaceMesh construct_aabb_mesh(pmp::BoundingBox& bbox);
 
 void init_kernel_stepping(AppState& state);

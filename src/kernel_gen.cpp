@@ -486,54 +486,80 @@ void generate_kernel_parallel(AppState& state) {
         }
     }
 
-    // * Divide planes into octants based on root face centroids
-    std::vector<Plane> octant_concave_planes[8];
-    std::vector<ExactPlane> octant_concave_exact[8];
-    std::vector<Plane> octant_convex_planes[8];
-    std::vector<ExactPlane> octant_convex_exact[8];
+    // * Divide planes into eight groups based on the chosen strategy
+    // * (spatial octants, normal similarity, or normal dissimilarity)
+    std::vector<Plane> group_concave_planes[8];
+    std::vector<ExactPlane> group_concave_exact[8];
+    std::vector<Plane> group_convex_planes[8];
+    std::vector<ExactPlane> group_convex_exact[8];
+
+    ParallelStrategy strategy = ParallelStrategy::SpatialOctants;  // ! Change this to switch strategies
+
+    int normal_octant_counters[8] = {0};  // Used for round robin dealing for dissimilar normals
 
     for (auto face : state.mesh.faces()) {
         if (!validPlane[face.idx()]) continue;
 
         // Only process the root face of each coplanar cluster
         if (uf.find(face.idx()) == static_cast<int>(face.idx())) {
-            // Calculate the centroid of the face to determine its octant
-            pmp::Point centroid(0,0,0);
-            int v_count = 0;
-            for (auto v : state.mesh.vertices(face)) {
-                centroid += state.mesh.position(v);
-                v_count++;
-            }
-            centroid /= static_cast<float>(v_count);
+            int group = 0;
 
-            int octant = 0;
-            if (centroid[0] > center[0]) octant |= 1;
-            if (centroid[1] > center[1]) octant |= 2;
-            if (centroid[2] > center[2]) octant |= 4;
+            if (strategy == ParallelStrategy::SpatialOctants) {
+                // Calculate the centroid of the face to determine its octant
+                pmp::Point centroid(0,0,0);
+                int v_count = 0;
+                for (auto v : state.mesh.vertices(face)) {
+                    centroid += state.mesh.position(v);
+                    v_count++;
+                }
+                centroid /= static_cast<float>(v_count);
 
-            // Route to appropriate octant list based on concavity
-            if (isSetConcave[face.idx()]) {
-                octant_concave_planes[octant].push_back(facePlanes[face.idx()]);
-                octant_concave_exact[octant].push_back(exactPlanes[face]);
+                // Determine the octant based on the centroid's position relative to the AABB center
+                if (centroid[0] > center[0]) group |= 1;
+                if (centroid[1] > center[1]) group |= 2;
+                if (centroid[2] > center[2]) group |= 4;
             } else {
-                octant_convex_planes[octant].push_back(facePlanes[face.idx()]);
-                octant_convex_exact[octant].push_back(exactPlanes[face]);
+                // Calculate which of the 8 directional octants the normal points towards
+                pmp::vec3 n = facePlanes[face.idx()].normal;
+                int normal_octant = 0;
+                if (n[0] > 0) normal_octant |= 1;
+                if (n[1] > 0) normal_octant |= 2;
+                if (n[2] > 0) normal_octant |= 4;
+
+                if (strategy == ParallelStrategy::SimilarNormals) {
+                    // Group planes with similar normals together
+                    group = normal_octant;
+                } else if (strategy == ParallelStrategy::DissimilarNormals) {
+                    // Group planes with dissimilar normals together
+                    // Distribute planes pointing in the same direction evenly across groups
+                    group = (normal_octant + normal_octant_counters[normal_octant]) % 8;
+                    normal_octant_counters[normal_octant]++;
+                }
+            }
+
+            // Route to appropriate group list based on concavity
+            if (isSetConcave[face.idx()]) {
+                group_concave_planes[group].push_back(facePlanes[face.idx()]);
+                group_concave_exact[group].push_back(exactPlanes[face]);
+            } else {
+                group_convex_planes[group].push_back(facePlanes[face.idx()]);
+                group_convex_exact[group].push_back(exactPlanes[face]);
             }
         }
     }
 
-    // Merge concave and convex planes for each octant, prioritizing concave planes
-    std::vector<Plane> octant_planes[8];
-    std::vector<ExactPlane> octant_exact[8];
+    // Merge concave and convex planes for each group, prioritizing concave planes
+    std::vector<Plane> group_planes[8];
+    std::vector<ExactPlane> group_exact[8];
 
     for (int i = 0; i < 8; ++i) {
-        octant_planes[i].insert(octant_planes[i].end(), octant_concave_planes[i].begin(), octant_concave_planes[i].end());
-        octant_planes[i].insert(octant_planes[i].end(), octant_convex_planes[i].begin(), octant_convex_planes[i].end());
-        octant_exact[i].insert(octant_exact[i].end(), octant_concave_exact[i].begin(), octant_concave_exact[i].end());
-        octant_exact[i].insert(octant_exact[i].end(), octant_convex_exact[i].begin(), octant_convex_exact[i].end());
+        group_planes[i].insert(group_planes[i].end(), group_concave_planes[i].begin(), group_concave_planes[i].end());
+        group_planes[i].insert(group_planes[i].end(), group_convex_planes[i].begin(), group_convex_planes[i].end());
+        group_exact[i].insert(group_exact[i].end(), group_concave_exact[i].begin(), group_concave_exact[i].end());
+        group_exact[i].insert(group_exact[i].end(), group_convex_exact[i].begin(), group_convex_exact[i].end());
     }
 
-    // * Process each octant in parallel
+    // * Process each group in parallel
     std::vector<pmp::SurfaceMesh> local_kernels(8);
     bool empty_kernel_detected = false;
 
@@ -559,8 +585,8 @@ void generate_kernel_parallel(AppState& state) {
             }
         }
 
-        for (size_t p = 0; p < octant_planes[i].size(); ++p) {
-            int aabb_class = classify_aabb(local_state, octant_exact[i][p]);
+        for (size_t p = 0; p < group_planes[i].size(); ++p) {
+            int aabb_class = classify_aabb(local_state, group_exact[i][p]);
             if (aabb_class == -1) {
                 local_skipped_cuts++;
                 continue;
@@ -571,7 +597,7 @@ void generate_kernel_parallel(AppState& state) {
                 break;
             }
 
-            mesh_utils::cut_at_plane_exact(local_state, local_state.kHat, octant_planes[i][p], octant_exact[i][p], false);
+            mesh_utils::cut_at_plane_exact(local_state, local_state.kHat, group_planes[i][p], group_exact[i][p], false);
             if (local_state.kHat.is_empty()) {
                 empty_kernel_detected = true;
                 break;
