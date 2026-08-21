@@ -101,6 +101,25 @@ void register_bbox(AppState& state) {
 }
 
 
+/**
+ * Computes the minimum and maximum coordinate bounds (minP, maxP) of a bounding box vertex collection.
+ */
+std::pair<Point, Point> compute_bbox_min_max(const std::vector<Point>& bboxVertices) {
+    if (bboxVertices.empty()) {
+        return {Point(0, 0, 0), Point(0, 0, 0)};
+    }
+    Point minP = bboxVertices[0];
+    Point maxP = bboxVertices[0];
+    for (const auto& v : bboxVertices) {
+        for (int i = 0; i < 3; i++) {
+            minP[i] = std::min(minP[i], v[i]);
+            maxP[i] = std::max(maxP[i], v[i]);
+        }
+    }
+    return {minP, maxP};
+}
+
+
 /*
  * Visualizes the given plane as a quad that fills the bbox of the mesh. There can only be one cutting plane
  * visualized at a time. It is registered as `constants::polyNames::cutPlane` in Polyscope. The normal of 
@@ -109,15 +128,7 @@ void register_bbox(AppState& state) {
 void visualize_cut_plane(AppState& state, const Plane& plane) {
     if (state.bboxVertices.empty()) return;
 
-    // Calculate bbox limits
-    Point minP = state.bboxVertices[0];
-    Point maxP = state.bboxVertices[0];
-    for (const auto& v : state.bboxVertices) {
-        for (int i = 0; i < 3; i++) {
-            minP[i] = std::min(minP[i], v[i]);
-            maxP[i] = std::max(maxP[i], v[i]);
-        }
-    }
+    auto [minP, maxP] = compute_bbox_min_max(state.bboxVertices);
 
     glm::vec3 normal(plane.normal[0], plane.normal[1], plane.normal[2]);
     
@@ -141,40 +152,10 @@ void visualize_cut_plane(AppState& state, const Plane& plane) {
         center + scale * (tangent - bitangent)
     };
     
-    // Clip the polygon against the 6 planes of the Bounding Box
-    auto clip = [&](std::vector<glm::vec3>& poly, int axis, float val, bool isMax) {
-        std::vector<glm::vec3> nextPoly;
-        if (poly.empty()) return nextPoly;
-
-        for (size_t i = 0; i < poly.size(); i++) {
-            glm::vec3 p1 = poly[i];
-            glm::vec3 p2 = poly[(i + 1) % poly.size()];
-
-            float v1 = p1[axis];
-            float v2 = p2[axis];
-
-            auto inside = [&](float v) { return isMax ? (v <= val) : (v >= val); };
-
-            if (inside(v1)) {
-                if (inside(v2)) {
-                    nextPoly.push_back(p2);
-                } else {
-                    float t = (val - v1) / (v2 - v1);
-                    nextPoly.push_back(p1 + t * (p2 - p1));
-                }
-            } else if (inside(v2)) {
-                float t = (val - v1) / (v2 - v1);
-                nextPoly.push_back(p1 + t * (p2 - p1));
-                nextPoly.push_back(p2);
-            }
-        }
-        return nextPoly;
-    };
-
-    // Sequentially clip against all 6 sides
+    // Sequentially clip against all 6 sides of the Bounding Box
     for (int i = 0; i < 3; i++) {
-        polygon = clip(polygon, i, minP[i], false); // Clip min side
-        polygon = clip(polygon, i, maxP[i], true);  // Clip max side
+        polygon = geometry::clip_polygon_axis(polygon, i, minP[i], false); // Clip min side
+        polygon = geometry::clip_polygon_axis(polygon, i, maxP[i], true);  // Clip max side
     }
 
     if (polygon.empty()) return;
@@ -207,15 +188,7 @@ void visualize_cut_plane(AppState& state, const Plane& plane) {
 void generate_random_bbox_plane(AppState& state) {
     if (state.bboxVertices.empty()) return;
 
-    // Calculate bbox limits
-    Point minP = state.bboxVertices[0];
-    Point maxP = state.bboxVertices[0];
-    for (const auto& v : state.bboxVertices) {
-        for (int i = 0; i < 3; i++) {
-            minP[i] = std::min(minP[i], v[i]);
-            maxP[i] = std::max(maxP[i], v[i]);
-        }
-    }
+    auto [minP, maxP] = compute_bbox_min_max(state.bboxVertices);
 
     // Setup random number generation
     std::random_device rd;

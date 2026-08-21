@@ -14,6 +14,7 @@ namespace mesh_utils {
     polyscope::SurfaceMesh* register_pmp_mesh(const std::string& name, const pmp::SurfaceMesh& mesh);
     polyscope::PointCloud* register_pmp_pc(const std::string& name, const pmp::SurfaceMesh& mesh);
     void register_bbox(AppState& state);
+    std::pair<Point, Point> compute_bbox_min_max(const std::vector<Point>& bboxVertices);
     void visualize_cut_plane(AppState& state, const Plane& plane);
     void generate_random_bbox_plane(AppState& state);
     std::vector<bool> identify_concave_faces(const pmp::SurfaceMesh& mesh);
