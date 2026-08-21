@@ -53,56 +53,70 @@ struct Plane {
     }
 };
 
-
+/**
+ * Visual rendering and Polyscope integration state.
+ */
 struct VisualState {
     polyscope::PointCloud* pc = nullptr;
-    polyscope::SurfaceMesh* oSMesh = nullptr;    // The surface mesh of the original mesh
-    polyscope::SurfaceMesh* kSMesh = nullptr;    // The surface mesh of the kernel
-    bool updateVisuals = true;
-    std::string statusMessage = "";
-    ImVec4 statusMessageColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
-};
-
-struct TrackingState {
-    int64_t aabb_min[3] = {0, 0, 0};
-    int64_t aabb_max[3] = {0, 0, 0};
-    pmp::Vertex aabb_v_min[3];
-    pmp::Vertex aabb_v_max[3];
-    int skippedCuts = 0;
-};
-
-enum class ParallelStrategy {
-    SpatialOctants,
-    SimilarNormals,
-    DissimilarNormals
-};
-
-struct KernelState {
-    pmp::SurfaceMesh kHat;  // Intermediate mesh kernel, init as AABB of mesh
-    bool isSteppingKernel = false;
-    int currentPlaneIdx = 0;
-    std::vector<Plane> supportPlanes;
-    std::vector<ExactPlane> exactSupportPlanes;
-    Plane activeCutPlane;
-    bool hasActiveCutPlane = false;
-    double lastComputeTime = 0.0;
-    ParallelStrategy parallelStrategy = ParallelStrategy::SpatialOctants;
-};
-
-struct IOState {
-    std::string targetDir = "./off_files";
-    std::vector<std::string> offFiles;
-    int selectedOffFileIdx = -1;
+    polyscope::SurfaceMesh* oSMesh = nullptr;    ///< Registered original mesh in Polyscope
+    polyscope::SurfaceMesh* kSMesh = nullptr;    ///< Registered kernel mesh in Polyscope
+    bool updateVisuals = true;                   ///< Whether to update 3D rendering during stepping
+    std::string statusMessage = "";              ///< Current in-app status message
+    ImVec4 statusMessageColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f); ///< Text color for status message
 };
 
 /**
- *  Application state struct to hold shared data across the application
+ * Bounding box and cut tracking metrics.
+ */
+struct TrackingState {
+    int64_t aabb_min[3] = {0, 0, 0};  ///< Exact integer AABB minimum bounds
+    int64_t aabb_max[3] = {0, 0, 0};  ///< Exact integer AABB maximum bounds
+    pmp::Vertex aabb_v_min[3];        ///< Extreme minimum vertices for multi-start edge descent
+    pmp::Vertex aabb_v_max[3];        ///< Extreme maximum vertices for multi-start edge descent
+    int skippedCuts = 0;              ///< Number of redundant plane cuts skipped
+};
+
+/**
+ * Parallelization partitioning strategies for multi-threaded OpenMP kernel generation.
+ */
+enum class ParallelStrategy {
+    SpatialOctants,    ///< Partition faces by centroid location in 8 spatial bounding octants
+    SimilarNormals,    ///< Group faces with similar outward normal orientations
+    DissimilarNormals  ///< Distribute face planes with similar normals evenly across different threads
+};
+
+/**
+ * Kernel computation state and plane queues.
+ */
+struct KernelState {
+    pmp::SurfaceMesh kHat;                 ///< Intermediate kernel mesh (initialized as mesh AABB)
+    bool isSteppingKernel = false;         ///< True if manual stepping mode is active
+    int currentPlaneIdx = 0;               ///< Index of next cutting plane in queue
+    std::vector<Plane> supportPlanes;      ///< Queue of floating-point supporting planes
+    std::vector<ExactPlane> exactSupportPlanes; ///< Queue of exact 256-bit supporting planes
+    Plane activeCutPlane;                  ///< Active cutting plane currently being processed
+    bool hasActiveCutPlane = false;        ///< True if activeCutPlane is set and visible
+    double lastComputeTime = 0.0;          ///< Execution runtime in seconds of last computation
+    ParallelStrategy parallelStrategy = ParallelStrategy::SpatialOctants; ///< Selected strategy
+};
+
+/**
+ * File I/O state for loading .off models.
+ */
+struct IOState {
+    std::string targetDir = "./off_files";      ///< Directory path containing .off files
+    std::vector<std::string> offFiles;          ///< List of discovered .off file names
+    int selectedOffFileIdx = -1;                ///< Index of currently loaded file
+};
+
+/**
+ * Top-level application state container holding core mesh data and subsystem sub-structs.
  */
 struct AppState {
     // * Core Mesh Data
-    pmp::SurfaceMesh mesh;  // The original mesh
-    bool meshLoaded = false;
-    std::vector<Point> bboxVertices;
+    pmp::SurfaceMesh mesh;               ///< The active original surface mesh
+    bool meshLoaded = false;             ///< True if a valid mesh is currently loaded
+    std::vector<Point> bboxVertices;     ///< Corner vertices of the mesh bounding box
 
     // * Sub-structs
     VisualState visuals;
