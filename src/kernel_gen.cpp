@@ -6,37 +6,96 @@
 #include "kernel_gen.hpp"
 
 
-namespace {
-    struct UnionFind {
-        std::vector<int> parent;
-        std::vector<int> rank;
+/**
+ * Precomputes valid face planes, groups connected coplanar faces using Union-Find,
+ * aggregates concavity properties for each cluster, and returns the root face plane clusters.
+ */
+std::vector<ClusteredPlane> extract_and_cluster_planes(AppState& state, const std::vector<bool>& isConcaveFace) {
+    size_t numFaces = state.mesh.n_faces();
+    std::vector<Plane> facePlanes(numFaces);
+    std::vector<bool> validPlane(numFaces, false);
 
-        UnionFind(int n) : parent(n), rank(n, 0) {
-            for (int i = 0; i < n; ++i) parent[i] = i;
+    auto exactPoints = state.mesh.get_vertex_property<ExactPoint>("v:exact_pos");
+    auto exactPlanes = state.mesh.get_face_property<ExactPlane>("f:exact_plane");
+
+    for (auto f : state.mesh.faces()) {
+        auto it = state.mesh.vertices(f).begin();
+        ExactPoint vA = exactPoints[*it]; ++it;
+        ExactPoint vB = exactPoints[*it]; ++it;
+        ExactPoint vC = exactPoints[*it];
+
+        tg::pos<3, ExactGeom::pos_scalar_t> pA(int64_t(vA.x), int64_t(vA.y), int64_t(vA.z));
+        tg::pos<3, ExactGeom::pos_scalar_t> pB(int64_t(vB.x), int64_t(vB.y), int64_t(vB.z));
+        tg::pos<3, ExactGeom::pos_scalar_t> pC(int64_t(vC.x), int64_t(vC.y), int64_t(vC.z));
+
+        exactPlanes[f] = ExactPlane::from_points(pA, pB, pC);
+
+        if (exactPlanes[f].is_valid()) {
+            auto dp = exactPlanes[f].to_dplane();
+            facePlanes[f.idx()] = Plane{
+                pmp::vec3(dp.normal.x, dp.normal.y, dp.normal.z),
+                static_cast<float>(-dp.dis / globalSettings::scaleFactor)
+            };
+            validPlane[f.idx()] = true;
         }
+    }
 
-        // Looks up which group face i belong to, with path compression
-        int find(int i) {
-            if (parent[i] == i) return i;
-            return parent[i] = find(parent[i]);
-        }
+    // Group connected coplanar faces using Union-Find
+    UnionFind uf(numFaces);
 
-        // Merge two groups together, with union by rank
-        void unite(int i, int j) {  
-            int root_i = find(i);
-            int root_j = find(j);
-            if (root_i != root_j) {
-                if (rank[root_i] > rank[root_j]) {
-                    parent[root_j] = root_i;
-                } else if (rank[root_i] < rank[root_j]) {
-                    parent[root_i] = root_j;
+    for (auto edge : state.mesh.edges()) {
+        if (state.mesh.is_boundary(edge)) continue;
+
+        pmp::Face f0 = state.mesh.face(state.mesh.halfedge(edge, 0));
+        pmp::Face f1 = state.mesh.face(state.mesh.halfedge(edge, 1));
+
+        if (validPlane[f0.idx()] && validPlane[f1.idx()]) {
+            const ExactPlane& ep0 = exactPlanes[f0];
+            const ExactPlane& ep1 = exactPlanes[f1];
+
+            bool are_identical = false;
+            if (ipg::are_parallel(ep0, ep1)) {
+                if (!tg::is_zero(ep0.a)) {
+                    are_identical = (ipg::mul<192>(ep0.a, ep1.d) == ipg::mul<192>(ep1.a, ep0.d));
+                } else if (!tg::is_zero(ep0.b)) {
+                    are_identical = (ipg::mul<192>(ep0.b, ep1.d) == ipg::mul<192>(ep1.b, ep0.d));
                 } else {
-                    parent[root_j] = root_i;
-                    rank[root_i]++;
+                    are_identical = (ipg::mul<192>(ep0.c, ep1.d) == ipg::mul<192>(ep1.c, ep0.d));
                 }
             }
+
+            if (are_identical) {
+                uf.unite(f0.idx(), f1.idx());
+            }
         }
-    };
+    }
+
+    // Aggregate concavity properties for the clustered sets
+    std::vector<bool> isSetConcave(numFaces, false);
+    for (auto face : state.mesh.faces()) {
+        if (!validPlane[face.idx()]) continue;
+        int root = uf.find(face.idx());
+        if (isConcaveFace[face.idx()]) {
+            isSetConcave[root] = true;
+        }
+    }
+
+    // Extract unique supporting planes (only 1 per disjoint set)
+    std::vector<ClusteredPlane> clusteredPlanes;
+    for (auto face : state.mesh.faces()) {
+        if (!validPlane[face.idx()]) continue;
+
+        if (uf.find(face.idx()) == static_cast<int>(face.idx())) {
+            clusteredPlanes.push_back(ClusteredPlane{
+                face,
+                facePlanes[face.idx()],
+                exactPlanes[face],
+                isSetConcave[face.idx()]
+            });
+        }
+    }
+
+    return clusteredPlanes;
 }
 
 
@@ -182,81 +241,9 @@ void init_kernel_stepping(AppState& state) {
         return;
     }
 
-    // * Plane clustering and concavity prioritization
-    // 1. Precompute all valid face planes
-    size_t numFaces = state.mesh.n_faces();
-    std::vector<Plane> facePlanes(numFaces);
-    std::vector<bool> validPlane(numFaces, false);
+    // * Extract unique supporting planes clustered by coplanarity & concavity
+    std::vector<ClusteredPlane> clusteredPlanes = extract_and_cluster_planes(state, isConcaveFace);
 
-    auto exactPoints = state.mesh.get_vertex_property<ExactPoint>("v:exact_pos");
-    auto exactPlanes = state.mesh.get_face_property<ExactPlane>("f:exact_plane");
-
-    for (auto face : state.mesh.faces()) {
-        auto it = state.mesh.vertices(face).begin();
-        ExactPoint vA = exactPoints[*it]; ++it;
-        ExactPoint vB = exactPoints[*it]; ++it;
-        ExactPoint vC = exactPoints[*it];
-
-        tg::pos<3, ExactGeom::pos_scalar_t> pA(int64_t(vA.x), int64_t(vA.y), int64_t(vA.z));
-        tg::pos<3, ExactGeom::pos_scalar_t> pB(int64_t(vB.x), int64_t(vB.y), int64_t(vB.z));
-        tg::pos<3, ExactGeom::pos_scalar_t> pC(int64_t(vC.x), int64_t(vC.y), int64_t(vC.z));
-
-        exactPlanes[face] = ExactPlane::from_points(pA, pB, pC);
-
-        if (exactPlanes[face].is_valid()) {
-            auto dp = exactPlanes[face].to_dplane();
-            facePlanes[face.idx()] = Plane{
-                pmp::vec3(dp.normal.x, dp.normal.y, dp.normal.z),
-                static_cast<float>(-dp.dis / globalSettings::scaleFactor)
-            };
-            validPlane[face.idx()] = true;
-        }
-    }
-
-    // 2. Group connected coplanar faces using Union-Find
-    UnionFind uf(numFaces);
-
-    for (auto edge : state.mesh.edges()) {
-        if (state.mesh.is_boundary(edge)) continue;
-
-        // Acquire the two faces adjacent to this edge via the two halfedges
-        pmp::Face f0 = state.mesh.face(state.mesh.halfedge(edge, 0));
-        pmp::Face f1 = state.mesh.face(state.mesh.halfedge(edge, 1));
-
-        if (validPlane[f0.idx()] && validPlane[f1.idx()]) {
-            const ExactPlane& ep0 = exactPlanes[f0];
-            const ExactPlane& ep1 = exactPlanes[f1];
-
-            bool are_identical = false;
-            if (ipg::are_parallel(ep0, ep1)) {
-                // Checks if adjacent faces have identical supporting planes
-                if (!tg::is_zero(ep0.a)) {
-                    are_identical = (ipg::mul<192>(ep0.a, ep1.d) == ipg::mul<192>(ep1.a, ep0.d));
-                } else if (!tg::is_zero(ep0.b)) {
-                    are_identical = (ipg::mul<192>(ep0.b, ep1.d) == ipg::mul<192>(ep1.b, ep0.d));
-                } else {
-                    are_identical = (ipg::mul<192>(ep0.c, ep1.d) == ipg::mul<192>(ep1.c, ep0.d));
-                }
-            }
-
-            if (are_identical) {
-                uf.unite(f0.idx(), f1.idx());
-            }
-        }
-    }
-
-    // 3. Aggregate concavity properties for the clustered sets
-    // If any face in the coplanar patch is concave, the whole plane is treated as concave.
-    std::vector<bool> isSetConcave(numFaces, false);
-    for (auto face : state.mesh.faces()) {
-        if (!validPlane[face.idx()]) continue;
-        int root = uf.find(face.idx());
-        if (isConcaveFace[face.idx()]) {
-            isSetConcave[root] = true;
-        }
-    }
-
-    // 4. Extract unique supporting planes (only 1 per disjoint set)
     std::vector<Plane> concavePlanes;
     std::vector<Plane> convexPlanes;
     std::vector<ExactPlane> exactConcavePlanes;
@@ -264,18 +251,13 @@ void init_kernel_stepping(AppState& state) {
     state.supportPlanes.clear();
     state.exactSupportPlanes.clear();
 
-    for (auto face : state.mesh.faces()) {
-        if (!validPlane[face.idx()]) continue;
-
-        // Only add the plane if this face is the "root" of its coplanar cluster
-        if (uf.find(face.idx()) == static_cast<int>(face.idx())) {
-            if (isSetConcave[face.idx()]) {
-                concavePlanes.push_back(facePlanes[face.idx()]);
-                exactConcavePlanes.push_back(exactPlanes[face]);
-            } else {
-                convexPlanes.push_back(facePlanes[face.idx()]);
-                exactConvexPlanes.push_back(exactPlanes[face]);
-            }
+    for (const auto& cp : clusteredPlanes) {
+        if (cp.isConcave) {
+            concavePlanes.push_back(cp.plane);
+            exactConcavePlanes.push_back(cp.exactPlane);
+        } else {
+            convexPlanes.push_back(cp.plane);
+            exactConvexPlanes.push_back(cp.exactPlane);
         }
     }
 
@@ -426,65 +408,8 @@ void generate_kernel_parallel(AppState& state) {
     state.skippedCuts = 0;
     std::atomic<int> local_skipped_cuts{0};  // Thread-safe counter
 
-    // Identify valid planes and group coplanar faces
-    size_t numFaces = state.mesh.n_faces();
-    std::vector<Plane> facePlanes(numFaces);
-    std::vector<bool> validPlane(numFaces, false);
-    auto exactPoints = state.mesh.get_vertex_property<ExactPoint>("v:exact_pos");
-    auto exactPlanes = state.mesh.get_face_property<ExactPlane>("f:exact_plane");
-
-    for (auto face : state.mesh.faces()) {
-        auto it = state.mesh.vertices(face).begin();
-        ExactPoint vA = exactPoints[*it]; ++it;
-        ExactPoint vB = exactPoints[*it]; ++it;
-        ExactPoint vC = exactPoints[*it];
-        
-        tg::pos<3, ExactGeom::pos_scalar_t> pA(int64_t(vA.x), int64_t(vA.y), int64_t(vA.z));
-        tg::pos<3, ExactGeom::pos_scalar_t> pB(int64_t(vB.x), int64_t(vB.y), int64_t(vB.z));
-        tg::pos<3, ExactGeom::pos_scalar_t> pC(int64_t(vC.x), int64_t(vC.y), int64_t(vC.z));
-        exactPlanes[face] = ExactPlane::from_points(pA, pB, pC);
-
-        if (exactPlanes[face].is_valid()) {
-            auto dp = exactPlanes[face].to_dplane();
-            facePlanes[face.idx()] = Plane{
-                pmp::vec3(dp.normal.x, dp.normal.y, dp.normal.z),
-                static_cast<float>(-dp.dis / globalSettings::scaleFactor)
-            };
-            validPlane[face.idx()] = true;
-        }
-    }
-
-    UnionFind uf(numFaces);
-    for (auto edge : state.mesh.edges()) {
-        if (state.mesh.is_boundary(edge)) continue;
-        pmp::Face f0 = state.mesh.face(state.mesh.halfedge(edge, 0));
-        pmp::Face f1 = state.mesh.face(state.mesh.halfedge(edge, 1));
-        if (validPlane[f0.idx()] && validPlane[f1.idx()]) {
-            const ExactPlane& ep0 = exactPlanes[f0];
-            const ExactPlane& ep1 = exactPlanes[f1];
-            bool are_identical = false;
-            if (ipg::are_parallel(ep0, ep1)) {
-                if (!tg::is_zero(ep0.a)) {
-                    are_identical = (ipg::mul<192>(ep0.a, ep1.d) == ipg::mul<192>(ep1.a, ep0.d));
-                } else if (!tg::is_zero(ep0.b)) {
-                    are_identical = (ipg::mul<192>(ep0.b, ep1.d) == ipg::mul<192>(ep1.b, ep0.d));
-                } else {
-                    are_identical = (ipg::mul<192>(ep0.c, ep1.d) == ipg::mul<192>(ep1.c, ep0.d));
-                }
-            }
-            if (are_identical) uf.unite(f0.idx(), f1.idx());
-        }
-    }
-
-    // Identify concave faces and aggregate concavity for the clustered sets
-    std::vector<bool> isSetConcave(numFaces, false);
-    for (auto face : state.mesh.faces()) {
-        if (!validPlane[face.idx()]) continue;
-        int root = uf.find(face.idx());
-        if (isConcaveFace[face.idx()]) {
-            isSetConcave[root] = true;
-        }
-    }
+    // Extract unique supporting planes clustered by coplanarity & concavity
+    std::vector<ClusteredPlane> clusteredPlanes = extract_and_cluster_planes(state, isConcaveFace);
 
     // * Divide planes into eight groups based on the chosen strategy
     // * (spatial octants, normal similarity, or normal dissimilarity)
@@ -497,54 +422,49 @@ void generate_kernel_parallel(AppState& state) {
 
     int normal_octant_counters[8] = {0};  // Used for round robin dealing for dissimilar normals
 
-    for (auto face : state.mesh.faces()) {
-        if (!validPlane[face.idx()]) continue;
+    for (const auto& cp : clusteredPlanes) {
+        int group = 0;
 
-        // Only process the root face of each coplanar cluster
-        if (uf.find(face.idx()) == static_cast<int>(face.idx())) {
-            int group = 0;
-
-            if (strategy == ParallelStrategy::SpatialOctants) {
-                // Calculate the centroid of the face to determine its octant
-                pmp::Point centroid(0,0,0);
-                int v_count = 0;
-                for (auto v : state.mesh.vertices(face)) {
-                    centroid += state.mesh.position(v);
-                    v_count++;
-                }
-                centroid /= static_cast<float>(v_count);
-
-                // Determine the octant based on the centroid's position relative to the AABB center
-                if (centroid[0] > center[0]) group |= 1;
-                if (centroid[1] > center[1]) group |= 2;
-                if (centroid[2] > center[2]) group |= 4;
-            } else {
-                // Calculate which of the 8 directional octants the normal points towards
-                pmp::vec3 n = facePlanes[face.idx()].normal;
-                int normal_octant = 0;
-                if (n[0] > 0) normal_octant |= 1;
-                if (n[1] > 0) normal_octant |= 2;
-                if (n[2] > 0) normal_octant |= 4;
-
-                if (strategy == ParallelStrategy::SimilarNormals) {
-                    // Group planes with similar normals together
-                    group = normal_octant;
-                } else if (strategy == ParallelStrategy::DissimilarNormals) {
-                    // Group planes with dissimilar normals together
-                    // Distribute planes pointing in the same direction evenly across groups
-                    group = (normal_octant + normal_octant_counters[normal_octant]) % 8;
-                    normal_octant_counters[normal_octant]++;
-                }
+        if (strategy == ParallelStrategy::SpatialOctants) {
+            // Calculate the centroid of the face to determine its octant
+            pmp::Point centroid(0,0,0);
+            int v_count = 0;
+            for (auto v : state.mesh.vertices(cp.face)) {
+                centroid += state.mesh.position(v);
+                v_count++;
             }
+            centroid /= static_cast<float>(v_count);
 
-            // Route to appropriate group list based on concavity
-            if (isSetConcave[face.idx()]) {
-                group_concave_planes[group].push_back(facePlanes[face.idx()]);
-                group_concave_exact[group].push_back(exactPlanes[face]);
-            } else {
-                group_convex_planes[group].push_back(facePlanes[face.idx()]);
-                group_convex_exact[group].push_back(exactPlanes[face]);
+            // Determine the octant based on the centroid's position relative to the AABB center
+            if (centroid[0] > center[0]) group |= 1;
+            if (centroid[1] > center[1]) group |= 2;
+            if (centroid[2] > center[2]) group |= 4;
+        } else {
+            // Calculate which of the 8 directional octants the normal points towards
+            pmp::vec3 n = cp.plane.normal;
+            int normal_octant = 0;
+            if (n[0] > 0) normal_octant |= 1;
+            if (n[1] > 0) normal_octant |= 2;
+            if (n[2] > 0) normal_octant |= 4;
+
+            if (strategy == ParallelStrategy::SimilarNormals) {
+                // Group planes with similar normals together
+                group = normal_octant;
+            } else if (strategy == ParallelStrategy::DissimilarNormals) {
+                // Group planes with dissimilar normals together
+                // Distribute planes pointing in the same direction evenly across groups
+                group = (normal_octant + normal_octant_counters[normal_octant]) % 8;
+                normal_octant_counters[normal_octant]++;
             }
+        }
+
+        // Route to appropriate group list based on concavity
+        if (cp.isConcave) {
+            group_concave_planes[group].push_back(cp.plane);
+            group_concave_exact[group].push_back(cp.exactPlane);
+        } else {
+            group_convex_planes[group].push_back(cp.plane);
+            group_convex_exact[group].push_back(cp.exactPlane);
         }
     }
 
