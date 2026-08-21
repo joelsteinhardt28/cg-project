@@ -32,10 +32,11 @@ To run the application:
    - Click the **Reset** button at the bottom of the loading section to reload the active mesh and reset all computed kernel/visual state.
 
 2. **Mesh Kernel Generation**:
+   - **Parallel Strategy**: Select the active parallel strategy (**Spatial Octants**, **Similar Normals**, or **Dissimilar Normals**) from the dropdown menu without restarting the application.
    - **Generate Kernel**: Computes the 3D mesh kernel using the sequential plane-cutting algorithm.
-   - **Generate Kernel Parallel**: Computes the kernel in parallel using multi-threaded plane group slicing via OpenMP.
+   - **Generate Kernel Parallel**: Computes the kernel in parallel using the selected strategy via OpenMP.
    - **Show / Hide Cut Plane & Normal**: Toggles the visibility of the active cutting plane quad and its normal vector in the 3D viewport.
-   - **In-App Feedback & Warnings**: Early termination and empty kernel notifications (e.g., genus $> 0$, fully convex meshes, or empty kernels) are displayed directly in the control panel text as well as via Polyscope viewport overlay windows.
+   - **Warnings**: Early termination and empty kernel notifications (e.g., genus $> 0$, fully convex meshes, or empty kernels) are displayed directly in the control panel text as well as via Polyscope viewport overlay windows.
 
 3. **Kernel Stepping**:
    - Toggle **Update Visuals During Stepping** and click **Start Kernel Stepping**.
@@ -43,4 +44,4 @@ To run the application:
 
 4. **Mesh Analysis & Visualization Utilities**:
    - **Visualize Face Normals**: Renders face normal vectors on the loaded surface mesh.
-   - **Identify Concave Faces**: Identifies and visualizes concave faces on the surface mesh via a scalar quantity overlay.
+   - **Identify Concave Faces**: Identifies and visualizes concave faces on the surface mesh

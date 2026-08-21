@@ -169,25 +169,72 @@ void render(AppState& state) {
 
 
     if (state.meshLoaded) {
-        if (ImGui::Button("Visualize Face Normals", constants::gui::buttonSize)) {
-            mesh_utils::visualize_face_normals(state);
+        // * Face Normals Toggle Button
+        auto* qNormals = (state.visuals.oSMesh) ? state.visuals.oSMesh->getQuantity("Face Normals") : nullptr;
+        bool normalsVisible = (qNormals != nullptr) && qNormals->isEnabled();
+        std::string normalsBtnText = normalsVisible ? "Hide Face Normals" : "Show Face Normals";
+
+        if (ImGui::Button(normalsBtnText.c_str(), constants::gui::buttonSize)) {
+            if (qNormals == nullptr) {
+                mesh_utils::visualize_face_normals(state);
+            } else {
+                qNormals->setEnabled(!normalsVisible);
+            }
         }
 
         ImGui::SameLine();
 
-        if (ImGui::Button("Identify Concave Faces", constants::gui::buttonSize)) {
-            std::vector<bool> isConcave = mesh_utils::identify_concave_faces(state.mesh);
-            std::vector<double> scalarVal(state.mesh.n_faces());
-            for (size_t i = 0; i < isConcave.size(); ++i) {
-                scalarVal[i] = isConcave[i] ? 1.0 : 0.0;
+        // * Concave Faces Toggle Button
+        auto* qConcave = (state.visuals.oSMesh) ? state.visuals.oSMesh->getQuantity("isConcave") : nullptr;
+        bool concaveVisible = (qConcave != nullptr) && qConcave->isEnabled();
+        std::string concaveBtnText = concaveVisible ? "Hide Concave Faces" : "Show Concave Faces";
+
+        if (ImGui::Button(concaveBtnText.c_str(), constants::gui::buttonSize)) {
+            if (qConcave == nullptr) {
+                std::vector<bool> isConcave = mesh_utils::identify_concave_faces(state.mesh);
+                std::vector<double> scalarVal(state.mesh.n_faces());
+                for (size_t i = 0; i < isConcave.size(); ++i) {
+                    scalarVal[i] = isConcave[i] ? 1.0 : 0.0;
+                }
+                state.visuals.oSMesh->addFaceScalarQuantity("isConcave", scalarVal)->setEnabled(true);
+                state.visuals.oSMesh->setTransparency(0.6f);
+            } else {
+                bool nextState = !concaveVisible;
+                qConcave->setEnabled(nextState);
+                if (nextState) {
+                    state.visuals.oSMesh->setTransparency(0.6f);
+                } else {
+                    state.visuals.oSMesh->setTransparency(constants::transparencies::mesh);
+                }
             }
-            state.visuals.oSMesh->addFaceScalarQuantity("isConcave", scalarVal)->setEnabled(true);
         }
 
         ImGui::Separator();
 
         // * Mesh Kernel Generation Section
         ImGui::TextColored(constants::colors::guiTitle, "=== MESH KERNEL GENERATION ===");
+
+        // * Dropdown to select Parallel Strategy
+        const char* strategyNames[] = {
+            "Spatial Octants",
+            "Similar Normals",
+            "Dissimilar Normals"
+        };
+        int currentStrategyIdx = static_cast<int>(state.kernel.parallelStrategy);
+        const char* strategyPreview = (currentStrategyIdx >= 0 && currentStrategyIdx < 3) ? strategyNames[currentStrategyIdx] : "Select Strategy";
+
+        if (ImGui::BeginCombo("Parallel Strategy", strategyPreview)) {
+            for (int i = 0; i < 3; i++) {
+                const bool isSelected = (currentStrategyIdx == i);
+                if (ImGui::Selectable(strategyNames[i], isSelected)) {
+                    state.kernel.parallelStrategy = static_cast<ParallelStrategy>(i);
+                }
+                if (isSelected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
 
         ImGui::PushStyleColor(ImGuiCol_Button, constants::colors::guiLimeButton);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, constants::colors::guiLimeButtonHovered);

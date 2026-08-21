@@ -71,6 +71,12 @@ struct TrackingState {
     int skippedCuts = 0;
 };
 
+enum class ParallelStrategy {
+    SpatialOctants,
+    SimilarNormals,
+    DissimilarNormals
+};
+
 struct KernelState {
     pmp::SurfaceMesh kHat;  // Intermediate mesh kernel, init as AABB of mesh
     bool isSteppingKernel = false;
@@ -80,6 +86,7 @@ struct KernelState {
     Plane activeCutPlane;
     bool hasActiveCutPlane = false;
     double lastComputeTime = 0.0;
+    ParallelStrategy parallelStrategy = ParallelStrategy::SpatialOctants;
 };
 
 struct IOState {

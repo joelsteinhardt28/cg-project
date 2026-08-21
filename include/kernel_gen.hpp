@@ -6,13 +6,6 @@
 
 #include "mesh_utils.hpp"
 
-
-enum class ParallelStrategy {
-    SpatialOctants,
-    SimilarNormals,
-    DissimilarNormals
-};
-
 struct UnionFind {
     std::vector<int> parent;
     std::vector<int> rank;

@@ -403,7 +403,11 @@ void generate_kernel(AppState& state) {
 void generate_kernel_parallel(AppState& state) {
     if (!state.meshLoaded || state.mesh.is_empty()) return;
 
-    print::info("Starting parallel kernel generation...");
+    std::string strategyName = "Spatial Octants";
+    if (state.kernel.parallelStrategy == ParallelStrategy::SimilarNormals) strategyName = "Similar Normals";
+    else if (state.kernel.parallelStrategy == ParallelStrategy::DissimilarNormals) strategyName = "Dissimilar Normals";
+
+    print::info("Starting parallel kernel generation (Strategy: " + strategyName + ")...");
     state.visuals.statusMessage.clear();
     mesh_utils::reset_linear_fallback_count();
     auto start_time = std::chrono::high_resolution_clock::now();
@@ -454,7 +458,7 @@ void generate_kernel_parallel(AppState& state) {
     std::vector<Plane> group_convex_planes[8];
     std::vector<ExactPlane> group_convex_exact[8];
 
-    ParallelStrategy strategy = ParallelStrategy::SpatialOctants;  // ! Change this to switch strategies
+    ParallelStrategy strategy = state.kernel.parallelStrategy;
 
     int normal_octant_counters[8] = {0};  // Used for round robin dealing for dissimilar normals
 
