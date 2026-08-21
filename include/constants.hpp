@@ -2,6 +2,8 @@
 
 #include <string_view>
 
+#include "imgui.h"
+
 #include "structs.hpp"
 
 
@@ -17,6 +19,22 @@ namespace constants::colors {
     inline constexpr Color cutPlane         = {0.8f, 0.1f, 0.2f};
     inline constexpr Color cutPlaneNormal   = {0.2f, 0.8f, 0.3f};
     inline constexpr Color bbox             = {0.4, 0.4, 0.4};
+
+    // Gui Colors
+    inline constexpr ImVec4 guiTitle               = ImVec4(0.075f, 0.929f, 0.922f, 1.0f);
+    inline constexpr ImVec4 guiInfo                = ImVec4(0.929f, 0.925f, 0.075f, 1.0f); 
+
+    inline constexpr ImVec4 guiResetButton         = ImVec4(0.820f, 0.220f, 0.220f, 1.0f);
+    inline constexpr ImVec4 guiResetButtonHovered  = ImVec4(0.950f, 0.320f, 0.320f, 1.0f);
+    inline constexpr ImVec4 guiResetButtonActive   = ImVec4(0.680f, 0.150f, 0.150f, 1.0f);
+
+    inline constexpr ImVec4 guiLimeButton          = ImVec4(0.320f, 0.680f, 0.200f, 1.0f);
+    inline constexpr ImVec4 guiLimeButtonHovered   = ImVec4(0.400f, 0.780f, 0.260f, 1.0f);
+    inline constexpr ImVec4 guiLimeButtonActive    = ImVec4(0.240f, 0.550f, 0.140f, 1.0f);
+}
+
+namespace constants::gui {
+    inline constexpr ImVec2 buttonSize             = ImVec2(220.0f, 0.0f);
 }
 
 namespace constants::transparencies {

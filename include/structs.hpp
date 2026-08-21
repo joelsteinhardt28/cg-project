@@ -8,6 +8,7 @@
 #include <integer-plane-geometry/geometry.hh>
 #include <integer-plane-geometry/point.hh>
 #include <integer-plane-geometry/plane.hh>
+#include "imgui.h"
 
 
 // Forward declarations
@@ -79,8 +80,10 @@ struct AppState {
     bool hasActiveCutPlane = false;
 
     // * Application flags
-    bool updateVisuals = false;
+    bool updateVisuals = true;
     double lastComputeTime = 0.0;
+    std::string statusMessage = "";
+    ImVec4 statusMessageColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
 
     // * AABB Fast Intersection Tracking
     int64_t aabb_min[3] = {0, 0, 0};

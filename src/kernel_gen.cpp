@@ -3,6 +3,7 @@
 #include <omp.h>
 #include <chrono>
 
+#include "polyscope/messages.h"
 #include "kernel_gen.hpp"
 
 
@@ -196,11 +197,16 @@ void init_kernel_stepping(AppState& state) {
     if (!state.meshLoaded || state.mesh.is_empty()) return;
 
     print::info("Initializing kernel stepping...");
+    state.statusMessage.clear();
 
     // * Genus early termination
     int euler = state.mesh.n_vertices() - state.mesh.n_edges() + state.mesh.n_faces();
     if (euler < 2) {
-        polyscope::info("Mesh has genus > 0. Kernel is empty.");
+        std::string msg = "Mesh has genus > 0. Kernel is empty.";
+        print::info(msg);
+        polyscope::warning(msg);
+        state.statusMessage = msg;
+        state.statusMessageColor = ImVec4(0.95f, 0.35f, 0.25f, 1.0f);
         return;
     }
 
@@ -236,7 +242,11 @@ void init_kernel_stepping(AppState& state) {
 
     // * Concavity early termination
     if (std::none_of(isConcaveFace.begin(), isConcaveFace.end(), [](bool v) { return v; })) {
-        polyscope::info("Mesh has no concave faces. Kernel is the mesh itself.");
+        std::string msg = "Mesh has no concave faces. Kernel is the mesh itself.";
+        print::info(msg);
+        polyscope::warning(msg);
+        state.statusMessage = msg;
+        state.statusMessageColor = ImVec4(0.25f, 0.85f, 0.45f, 1.0f);
         state.kHat = state.mesh;
         return;
     }
@@ -303,8 +313,12 @@ void step_kernel(AppState& state, bool updateVisuals = true) {
     }
 
     if (state.kHat.is_empty()) {
-        print::info("Kernel Generation: Kernel is empty.");
+        std::string msg = "Kernel is empty.";
+        print::info("Kernel Generation: " + msg);
         print::info("Kernel generation complete. Total linear fallbacks in edge_descent_exact: " + std::to_string(mesh_utils::get_linear_fallback_count()));
+        polyscope::warning(msg);
+        state.statusMessage = msg;
+        state.statusMessageColor = ImVec4(0.95f, 0.35f, 0.25f, 1.0f);
         state.isSteppingKernel = false;
 
         // Final visual update
@@ -329,8 +343,12 @@ void step_kernel(AppState& state, bool updateVisuals = true) {
         return;
     } else if (aabb_class == 1) {
         // fully in positive half-space, kernel is destroyed
-        print::info("AABB Check: Kernel entirely discarded. Kernel is empty.");
+        std::string msg = "Kernel is empty (entirely discarded by plane intersection check).";
+        print::info("AABB Check: " + msg);
         print::info("Kernel generation complete. Total linear fallbacks in edge_descent_exact: " + std::to_string(mesh_utils::get_linear_fallback_count()));
+        polyscope::warning(msg);
+        state.statusMessage = msg;
+        state.statusMessageColor = ImVec4(0.95f, 0.35f, 0.25f, 1.0f);
         state.kHat.clear();
         state.isSteppingKernel = false;
         state.currentPlaneIdx = state.supportPlanes.size();  // terminate
@@ -346,6 +364,15 @@ void step_kernel(AppState& state, bool updateVisuals = true) {
     mesh_utils::cut_at_plane_exact(state, state.kHat, plane, state.exactSupportPlanes[state.currentPlaneIdx], state.updateVisuals);
     
     state.currentPlaneIdx++;
+
+    if (state.kHat.is_empty()) {
+        std::string msg = "Kernel is empty (entirely discarded after plane cut).";
+        print::info("Kernel Generation: " + msg);
+        polyscope::warning(msg);
+        state.statusMessage = msg;
+        state.statusMessageColor = ImVec4(0.95f, 0.35f, 0.25f, 1.0f);
+        state.isSteppingKernel = false;
+    }
 
     // Update the kernel surface mesh in Polyscope
     if (updateVisuals) {
@@ -377,13 +404,18 @@ void generate_kernel_parallel(AppState& state) {
     if (!state.meshLoaded || state.mesh.is_empty()) return;
 
     print::info("Starting parallel kernel generation...");
+    state.statusMessage.clear();
     mesh_utils::reset_linear_fallback_count();
     auto start_time = std::chrono::high_resolution_clock::now();
 
     // Genus early termination
     int euler = state.mesh.n_vertices() - state.mesh.n_edges() + state.mesh.n_faces();
     if (euler < 2) {
-        polyscope::info("Mesh has genus > 0. Kernel is empty.");
+        std::string msg = "Mesh has genus > 0. Kernel is empty.";
+        print::info(msg);
+        polyscope::warning(msg);
+        state.statusMessage = msg;
+        state.statusMessageColor = ImVec4(0.95f, 0.35f, 0.25f, 1.0f);
         state.kHat.clear();
         if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
         return;
@@ -393,7 +425,11 @@ void generate_kernel_parallel(AppState& state) {
     std::vector<bool> isConcaveFace = mesh_utils::identify_concave_faces(state.mesh);
 
     if (std::none_of(isConcaveFace.begin(), isConcaveFace.end(), [](bool v) { return v; })) {
-        polyscope::info("Mesh has no concave faces. Kernel is the mesh itself.");
+        std::string msg = "Mesh has no concave faces. Kernel is the mesh itself.";
+        print::info(msg);
+        polyscope::warning(msg);
+        state.statusMessage = msg;
+        state.statusMessageColor = ImVec4(0.25f, 0.85f, 0.45f, 1.0f);
         state.kHat = state.mesh;
         if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
         state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
@@ -581,6 +617,14 @@ void generate_kernel_parallel(AppState& state) {
     std::chrono::duration<double> elapsed = end_time - start_time;
     state.lastComputeTime = elapsed.count();
     
+    if (state.kHat.is_empty()) {
+        std::string msg = "Kernel is empty (entirely discarded during cutting).";
+        print::info(msg);
+        polyscope::warning(msg);
+        state.statusMessage = msg;
+        state.statusMessageColor = ImVec4(0.95f, 0.35f, 0.25f, 1.0f);
+    }
+
     // * Update visuals
     state.isSteppingKernel = false;
     if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
