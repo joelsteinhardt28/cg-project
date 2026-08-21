@@ -40,7 +40,13 @@ if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang" OR "${CMAKE_CXX_COMPILER_ID}" STR
   SET(CMAKE_CXX_FLAGS "${BASE_CXX_FLAGS} ${DISABLED_WARNINGS}")
   #SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TRACE_INCLUDES}") # uncomment if you need to track down where something is getting included from
   SET(CMAKE_CXX_FLAGS_DEBUG          "${CMAKE_CXX_FLAGS_DEBUG} -g3")
-  SET(CMAKE_CXX_FLAGS_MINSIZEREL     "-Os -DNDEBUG")
+  # IMPORTANT: Do NOT enable -ffast-math for Release or any build type!
+  # -ffast-math breaks IEEE 754 compliance and floating-point/integer semantic guarantees,
+  # which silently destroys exact 256-bit geometric predicates in typed-geometry and integer-plane-geometry.
+  if (CMAKE_CXX_FLAGS_RELEASE MATCHES "-ffast-math" OR CMAKE_CXX_FLAGS MATCHES "-ffast-math")
+    message(FATAL_ERROR "-ffast-math must NOT be enabled as it silently destroys exact 256-bit geometric predicates.")
+  endif()
+
   SET(CMAKE_CXX_FLAGS_RELEASE        "-march=native -O3 -DNDEBUG")
   SET(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g")
 elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")

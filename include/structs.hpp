@@ -54,47 +54,52 @@ struct Plane {
 };
 
 
-/**
- *  Application state struct to hold shared data across the application
- */
-struct AppState {
-
-    // * Polyscope structures
+struct VisualState {
     polyscope::PointCloud* pc = nullptr;
     polyscope::SurfaceMesh* oSMesh = nullptr;    // The surface mesh of the original mesh
     polyscope::SurfaceMesh* kSMesh = nullptr;    // The surface mesh of the kernel
+    bool updateVisuals = true;
+    std::string statusMessage = "";
+    ImVec4 statusMessageColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+};
 
-    // * PMP structures
-    pmp::SurfaceMesh mesh;  // The original mesh
+struct TrackingState {
+    int64_t aabb_min[3] = {0, 0, 0};
+    int64_t aabb_max[3] = {0, 0, 0};
+    pmp::Vertex aabb_v_min[3];
+    pmp::Vertex aabb_v_max[3];
+    int skippedCuts = 0;
+};
+
+struct KernelState {
     pmp::SurfaceMesh kHat;  // Intermediate mesh kernel, init as AABB of mesh
-    bool meshLoaded = false;
-
-    std::vector<Point> bboxVertices;
-
-    // * Kernel generation state
     bool isSteppingKernel = false;
     int currentPlaneIdx = 0;
     std::vector<Plane> supportPlanes;
     std::vector<ExactPlane> exactSupportPlanes;
     Plane activeCutPlane;
     bool hasActiveCutPlane = false;
-
-    // * Application flags
-    bool updateVisuals = true;
     double lastComputeTime = 0.0;
-    std::string statusMessage = "";
-    ImVec4 statusMessageColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+};
 
-    // * AABB Fast Intersection Tracking
-    int64_t aabb_min[3] = {0, 0, 0};
-    int64_t aabb_max[3] = {0, 0, 0};
-    pmp::Vertex aabb_v_min[3];
-    pmp::Vertex aabb_v_max[3];
-    int skippedCuts = 0;
-
-    // * IO
+struct IOState {
     std::string targetDir = "./off_files";
     std::vector<std::string> offFiles;
     int selectedOffFileIdx = -1;
+};
 
+/**
+ *  Application state struct to hold shared data across the application
+ */
+struct AppState {
+    // * Core Mesh Data
+    pmp::SurfaceMesh mesh;  // The original mesh
+    bool meshLoaded = false;
+    std::vector<Point> bboxVertices;
+
+    // * Sub-structs
+    VisualState visuals;
+    TrackingState tracking;
+    KernelState kernel;
+    IOState io;
 };

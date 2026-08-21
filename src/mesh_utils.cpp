@@ -26,9 +26,10 @@ void reset_linear_fallback_count() {
     g_linear_fallback_count.store(0);
 }
 
+
 // * HELPER FUNCTIONS * //
 
-/*
+/**
  * Registers a PMP surface mesh in Polyscope using the vertex positions and face indices of the given PMP mesh. The surface
  * mesh is registered with the name `name`.
  */
@@ -54,7 +55,8 @@ polyscope::SurfaceMesh* register_pmp_mesh(const std::string& name, const pmp::Su
     return polyscope::registerSurfaceMesh(name, vertices, faces);
 }
 
-/*
+
+/**
  * Registers a PMP point cloud in Polyscope using the vertex positions of the given PMP mesh. The point cloud is registered
  * with the name `name`.
  */
@@ -69,7 +71,8 @@ polyscope::PointCloud* register_pmp_pc(const std::string& name, const pmp::Surfa
     return polyscope::registerPointCloud(name, vertices);
 }
 
-/*
+
+/**
  * Registers or updates the bounding box and its visualization for `state.mesh`.
  */
 void register_bbox(AppState& state) {
@@ -120,7 +123,7 @@ std::pair<Point, Point> compute_bbox_min_max(const std::vector<Point>& bboxVerti
 }
 
 
-/*
+/**
  * Visualizes the given plane as a quad that fills the bbox of the mesh. There can only be one cutting plane
  * visualized at a time. It is registered as `constants::polyNames::cutPlane` in Polyscope. The normal of 
  * the plane is also visualized as a curve network registered as `constants::polyNames::cutPlaneNormal`.
@@ -181,7 +184,7 @@ void visualize_cut_plane(AppState& state, const Plane& plane) {
 }
 
 
-/*
+/**
  * Generates a random plane that intersects the bounding box of `state.mesh` and visualizes it. The plane is stored in
  * `state.activeCutPlane` and can be used for cutting the mesh.
  */
@@ -205,11 +208,11 @@ void generate_random_bbox_plane(AppState& state) {
     normal = glm::normalize(normal);
 
     // Store active cut plane
-    state.activeCutPlane.normal = pmp::Point(normal.x, normal.y, normal.z);
-    state.activeCutPlane.d = -pmp::dot(state.activeCutPlane.normal, pmp::Point(center.x, center.y, center.z));
-    state.hasActiveCutPlane = true;
+    state.kernel.activeCutPlane.normal = pmp::Point(normal.x, normal.y, normal.z);
+    state.kernel.activeCutPlane.d = -pmp::dot(state.kernel.activeCutPlane.normal, pmp::Point(center.x, center.y, center.z));
+    state.kernel.hasActiveCutPlane = true;
 
-    visualize_cut_plane(state, state.activeCutPlane);
+    visualize_cut_plane(state, state.kernel.activeCutPlane);
 }
 
 
@@ -274,11 +277,12 @@ std::vector<bool> identify_concave_faces(const pmp::SurfaceMesh& mesh) {
     return isConcave;
 }
 
+
 /**
  * Visualizes the face normals of the loaded mesh in Polyscope.
  */
 void visualize_face_normals(AppState& state) {
-    if (!state.meshLoaded || !state.oSMesh) return;
+    if (!state.meshLoaded || !state.visuals.oSMesh) return;
 
     std::vector<glm::vec3> faceNormals;
     faceNormals.reserve(state.mesh.n_faces());
@@ -287,7 +291,7 @@ void visualize_face_normals(AppState& state) {
         faceNormals.push_back(glm::vec3(n[0], n[1], n[2]));
     }
 
-    state.oSMesh->addFaceVectorQuantity("Face Normals", faceNormals)->setEnabled(true);
+    state.visuals.oSMesh->addFaceVectorQuantity("Face Normals", faceNormals)->setEnabled(true);
 }
 
 
@@ -358,12 +362,12 @@ pmp::Halfedge edge_descent(pmp::SurfaceMesh& mesh, const Plane& plane, const App
     // 2. Multi-start descent from the 6 extreme AABB vertices if primary descent failed
     if (state != nullptr) {
         for (int i = 0; i < 3; ++i) {
-            pmp::Vertex min_v = state->aabb_v_min[i];
+            pmp::Vertex min_v = state->tracking.aabb_v_min[i];
             if (min_v.is_valid() && mesh.is_valid(min_v) && !mesh.is_deleted(min_v) && !visited[min_v.idx()]) {
                 res = single_descent(min_v, visited);
                 if (res.is_valid()) return res;
             }
-            pmp::Vertex max_v = state->aabb_v_max[i];
+            pmp::Vertex max_v = state->tracking.aabb_v_max[i];
             if (max_v.is_valid() && mesh.is_valid(max_v) && !mesh.is_deleted(max_v) && !visited[max_v.idx()]) {
                 res = single_descent(max_v, visited);
                 if (res.is_valid()) return res;
@@ -374,6 +378,7 @@ pmp::Halfedge edge_descent(pmp::SurfaceMesh& mesh, const Plane& plane, const App
     print::warning("Edge descent hit a local minimum on all seeds.");
     return pmp::Halfedge();
 }
+
 
 /**
  * Find an edge that crosses the given plane using ipg exact arithmetics.
@@ -448,12 +453,12 @@ pmp::Halfedge edge_descent_exact(pmp::SurfaceMesh& mesh, const Plane& plane, con
     // 2. Multi-start descent from the 6 extreme AABB vertices if primary descent failed
     if (state != nullptr) {
         for (int i = 0; i < 3; ++i) {
-            pmp::Vertex min_v = state->aabb_v_min[i];
+            pmp::Vertex min_v = state->tracking.aabb_v_min[i];
             if (min_v.is_valid() && mesh.is_valid(min_v) && !mesh.is_deleted(min_v) && !visited[min_v.idx()]) {
                 res = single_descent(min_v, visited);
                 if (res.is_valid()) return res;
             }
-            pmp::Vertex max_v = state->aabb_v_max[i];
+            pmp::Vertex max_v = state->tracking.aabb_v_max[i];
             if (max_v.is_valid() && mesh.is_valid(max_v) && !mesh.is_deleted(max_v) && !visited[max_v.idx()]) {
                 res = single_descent(max_v, visited);
                 if (res.is_valid()) return res;
@@ -578,8 +583,8 @@ void cut_at_plane_exact(AppState& state, pmp::SurfaceMesh& mesh, const Plane& pl
     bool min_discarded[3] = {false, false, false};
     bool max_discarded[3] = {false, false, false};
     for (int i = 0; i < 3; i++) {
-        if (state.aabb_v_min[i].is_valid() && get_class(state.aabb_v_min[i]) > 0) min_discarded[i] = true;
-        if (state.aabb_v_max[i].is_valid() && get_class(state.aabb_v_max[i]) > 0) max_discarded[i] = true;
+        if (state.tracking.aabb_v_min[i].is_valid() && get_class(state.tracking.aabb_v_min[i]) > 0) min_discarded[i] = true;
+        if (state.tracking.aabb_v_max[i].is_valid() && get_class(state.tracking.aabb_v_max[i]) > 0) max_discarded[i] = true;
     }
 
     // Map kept vertices
@@ -744,11 +749,11 @@ void cut_at_plane_exact(AppState& state, pmp::SurfaceMesh& mesh, const Plane& pl
     pmp::Vertex new_aabb_v_max[3];
     for (int i = 0; i < 3; i++) {
         // Map retained extreme vertices to the new mesh
-        if (!min_discarded[i] && state.aabb_v_min[i].is_valid()) {
-            new_aabb_v_min[i] = vertexMap[state.aabb_v_min[i]];
+        if (!min_discarded[i] && state.tracking.aabb_v_min[i].is_valid()) {
+            new_aabb_v_min[i] = vertexMap[state.tracking.aabb_v_min[i]];
         } 
-        if (!max_discarded[i] && state.aabb_v_max[i].is_valid()) {
-            new_aabb_v_max[i] = vertexMap[state.aabb_v_max[i]]; 
+        if (!max_discarded[i] && state.tracking.aabb_v_max[i].is_valid()) {
+            new_aabb_v_max[i] = vertexMap[state.tracking.aabb_v_max[i]]; 
         }
     }
 
@@ -768,7 +773,7 @@ void cut_at_plane_exact(AppState& state, pmp::SurfaceMesh& mesh, const Plane& pl
                     }
                 }
                 new_aabb_v_min[i] = best_ver;
-                state.aabb_min[i] = best_val;
+                state.tracking.aabb_min[i] = best_val;
             }
             if (max_discarded[i]) {
                 int64_t best_val = std::numeric_limits<int64_t>::lowest();
@@ -783,15 +788,15 @@ void cut_at_plane_exact(AppState& state, pmp::SurfaceMesh& mesh, const Plane& pl
                     }
                 }
                 new_aabb_v_max[i] = best_ver;
-                state.aabb_max[i] = best_val;
+                state.tracking.aabb_max[i] = best_val;
             }
         }
     }
 
     // Save back to state
     for (int i = 0; i < 3; ++i) {
-        state.aabb_v_min[i] = new_aabb_v_min[i];
-        state.aabb_v_max[i] = new_aabb_v_max[i];
+        state.tracking.aabb_v_min[i] = new_aabb_v_min[i];
+        state.tracking.aabb_v_max[i] = new_aabb_v_max[i];
     }
     
     mesh = newMesh;

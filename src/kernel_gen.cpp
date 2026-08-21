@@ -168,12 +168,12 @@ int classify_aabb(const AppState& state, const ExactPlane& exactPlane) {
     // bits_plane_d + 1 handles the max potential sum without overflow (see paper)
     constexpr int bits_out = ExactGeom::bits_plane_d + 1;
 
-    auto c_x = state.aabb_max[0] + state.aabb_min[0];
-    auto c_y = state.aabb_max[1] + state.aabb_min[1];
-    auto c_z = state.aabb_max[2] + state.aabb_min[2];
-    auto s_x = state.aabb_max[0] - state.aabb_min[0];
-    auto s_y = state.aabb_max[1] - state.aabb_min[1];
-    auto s_z = state.aabb_max[2] - state.aabb_min[2];
+    auto c_x = state.tracking.aabb_max[0] + state.tracking.aabb_min[0];
+    auto c_y = state.tracking.aabb_max[1] + state.tracking.aabb_min[1];
+    auto c_z = state.tracking.aabb_max[2] + state.tracking.aabb_min[2];
+    auto s_x = state.tracking.aabb_max[0] - state.tracking.aabb_min[0];
+    auto s_y = state.tracking.aabb_max[1] - state.tracking.aabb_min[1];
+    auto s_z = state.tracking.aabb_max[2] - state.tracking.aabb_min[2];
 
     auto d2 = exactPlane.d << 1;  // multiply by 2 to avoid fraction
     auto dot_c = ipg::mul<bits_out>(c_x, exactPlane.a) + ipg::mul<bits_out>(c_y, exactPlane.b) + ipg::mul<bits_out>(c_z, exactPlane.c);
@@ -197,7 +197,7 @@ void init_kernel_stepping(AppState& state) {
     if (!state.meshLoaded || state.mesh.is_empty()) return;
 
     print::info("Initializing kernel stepping...");
-    state.statusMessage.clear();
+    state.visuals.statusMessage.clear();
 
     // * Genus early termination
     int euler = state.mesh.n_vertices() - state.mesh.n_edges() + state.mesh.n_faces();
@@ -205,36 +205,36 @@ void init_kernel_stepping(AppState& state) {
         std::string msg = "Mesh has genus > 0. Kernel is empty.";
         print::info(msg);
         polyscope::warning(msg);
-        state.statusMessage = msg;
-        state.statusMessageColor = ImVec4(0.95f, 0.35f, 0.25f, 1.0f);
+        state.visuals.statusMessage = msg;
+        state.visuals.statusMessageColor = ImVec4(0.95f, 0.35f, 0.25f, 1.0f);
         return;
     }
 
     // Initialize intermediate kernel with AABB
     pmp::BoundingBox bbox = pmp::bounds(state.mesh);
-    state.kHat = construct_aabb_mesh(bbox);
+    state.kernel.kHat = construct_aabb_mesh(bbox);
 
     // * Intialize AABB tracking for fast intersection tests
     for (int i = 0; i < 3; ++i) {
-        state.aabb_min[i] = std::numeric_limits<int64_t>::max();
-        state.aabb_max[i] = std::numeric_limits<int64_t>::lowest();
+        state.tracking.aabb_min[i] = std::numeric_limits<int64_t>::max();
+        state.tracking.aabb_max[i] = std::numeric_limits<int64_t>::lowest();
     }
-    auto exactPoints_k = state.kHat.get_vertex_property<ExactPoint>("v:exact_pos");
-    for (auto v : state.kHat.vertices()) {
+    auto exactPoints_k = state.kernel.kHat.get_vertex_property<ExactPoint>("v:exact_pos");
+    for (auto v : state.kernel.kHat.vertices()) {
         ExactPoint p = exactPoints_k[v];
         for (int i = 0; i < 3; ++i) {
             int64_t val = static_cast<int64_t>(p.comp(i));  // w=1 for initial AABB
-            if (val < state.aabb_min[i]) {
-                state.aabb_min[i] = val;
-                state.aabb_v_min[i] = v;
+            if (val < state.tracking.aabb_min[i]) {
+                state.tracking.aabb_min[i] = val;
+                state.tracking.aabb_v_min[i] = v;
             }
-            if (val > state.aabb_max[i]) {
-                state.aabb_max[i] = val;
-                state.aabb_v_max[i] = v;
+            if (val > state.tracking.aabb_max[i]) {
+                state.tracking.aabb_max[i] = val;
+                state.tracking.aabb_v_max[i] = v;
             }
         }
     }
-    state.skippedCuts = 0;  // reset
+    state.tracking.skippedCuts = 0;  // reset
     mesh_utils::reset_linear_fallback_count();
 
     // * Identify concave faces
@@ -245,9 +245,9 @@ void init_kernel_stepping(AppState& state) {
         std::string msg = "Mesh has no concave faces. Kernel is the mesh itself.";
         print::info(msg);
         polyscope::warning(msg);
-        state.statusMessage = msg;
-        state.statusMessageColor = ImVec4(0.25f, 0.85f, 0.45f, 1.0f);
-        state.kHat = state.mesh;
+        state.visuals.statusMessage = msg;
+        state.visuals.statusMessageColor = ImVec4(0.25f, 0.85f, 0.45f, 1.0f);
+        state.kernel.kHat = state.mesh;
         return;
     }
 
@@ -258,8 +258,8 @@ void init_kernel_stepping(AppState& state) {
     std::vector<Plane> convexPlanes;
     std::vector<ExactPlane> exactConcavePlanes;
     std::vector<ExactPlane> exactConvexPlanes;
-    state.supportPlanes.clear();
-    state.exactSupportPlanes.clear();
+    state.kernel.supportPlanes.clear();
+    state.kernel.exactSupportPlanes.clear();
 
     for (const auto& cp : clusteredPlanes) {
         if (cp.isConcave) {
@@ -272,19 +272,19 @@ void init_kernel_stepping(AppState& state) {
     }
 
     // Prioritize concave planes first, then convex planes
-    state.supportPlanes.insert(state.supportPlanes.end(), concavePlanes.begin(), concavePlanes.end());
-    state.supportPlanes.insert(state.supportPlanes.end(), convexPlanes.begin(), convexPlanes.end());
-    state.exactSupportPlanes.insert(state.exactSupportPlanes.end(), exactConcavePlanes.begin(), exactConcavePlanes.end());
-    state.exactSupportPlanes.insert(state.exactSupportPlanes.end(), exactConvexPlanes.begin(), exactConvexPlanes.end());
+    state.kernel.supportPlanes.insert(state.kernel.supportPlanes.end(), concavePlanes.begin(), concavePlanes.end());
+    state.kernel.supportPlanes.insert(state.kernel.supportPlanes.end(), convexPlanes.begin(), convexPlanes.end());
+    state.kernel.exactSupportPlanes.insert(state.kernel.exactSupportPlanes.end(), exactConcavePlanes.begin(), exactConcavePlanes.end());
+    state.kernel.exactSupportPlanes.insert(state.kernel.exactSupportPlanes.end(), exactConvexPlanes.begin(), exactConvexPlanes.end());
 
-    state.currentPlaneIdx = 0;
-    state.isSteppingKernel = true;
+    state.kernel.currentPlaneIdx = 0;
+    state.kernel.isSteppingKernel = true;
 
     // Register initial kernel
-    if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
-    state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
-    state.kSMesh->setSurfaceColor(constants::colors::kernel);
-    state.kSMesh->setTransparency(constants::transparencies::kernel);
+    if (state.visuals.kSMesh) polyscope::removeStructure(state.visuals.kSMesh);
+    state.visuals.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kernel.kHat);
+    state.visuals.kSMesh->setSurfaceColor(constants::colors::kernel);
+    state.visuals.kSMesh->setTransparency(constants::transparencies::kernel);
 }
 
 
@@ -294,52 +294,52 @@ void init_kernel_stepping(AppState& state) {
  * conditions and advances the current plane index.
  */
 void step_kernel(AppState& state, bool updateVisuals = true) {
-    if (!state.isSteppingKernel || state.supportPlanes.empty()) return;
+    if (!state.kernel.isSteppingKernel || state.kernel.supportPlanes.empty()) return;
 
-    print::info("Kernel Generation: Processing plane " + std::to_string(state.currentPlaneIdx) + " / " + std::to_string(state.supportPlanes.size()));
+    print::info("Kernel Generation: Processing plane " + std::to_string(state.kernel.currentPlaneIdx) + " / " + std::to_string(state.kernel.supportPlanes.size()));
 
-    if (static_cast<size_t>(state.currentPlaneIdx) >= state.supportPlanes.size()) {
+    if (static_cast<size_t>(state.kernel.currentPlaneIdx) >= state.kernel.supportPlanes.size()) {
         print::info("Kernel Generation: All planes processed.");
         print::info("Kernel generation complete. Total linear fallbacks in edge_descent_exact: " + std::to_string(mesh_utils::get_linear_fallback_count()));
-        state.isSteppingKernel = false;
+        state.kernel.isSteppingKernel = false;
 
         // Final visual update
-        if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
-        state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
-        state.kSMesh->setSurfaceColor(constants::colors::kernel);
-        state.kSMesh->setTransparency(constants::transparencies::kernel);
+        if (state.visuals.kSMesh) polyscope::removeStructure(state.visuals.kSMesh);
+        state.visuals.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kernel.kHat);
+        state.visuals.kSMesh->setSurfaceColor(constants::colors::kernel);
+        state.visuals.kSMesh->setTransparency(constants::transparencies::kernel);
 
         return;
     }
 
-    if (state.kHat.is_empty()) {
+    if (state.kernel.kHat.is_empty()) {
         std::string msg = "Kernel is empty.";
         print::info("Kernel Generation: " + msg);
         print::info("Kernel generation complete. Total linear fallbacks in edge_descent_exact: " + std::to_string(mesh_utils::get_linear_fallback_count()));
         polyscope::warning(msg);
-        state.statusMessage = msg;
-        state.statusMessageColor = ImVec4(0.95f, 0.35f, 0.25f, 1.0f);
-        state.isSteppingKernel = false;
+        state.visuals.statusMessage = msg;
+        state.visuals.statusMessageColor = ImVec4(0.95f, 0.35f, 0.25f, 1.0f);
+        state.kernel.isSteppingKernel = false;
 
         // Final visual update
-        if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
-        state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
-        state.kSMesh->setSurfaceColor(constants::colors::kernel);
-        state.kSMesh->setTransparency(constants::transparencies::kernel);
+        if (state.visuals.kSMesh) polyscope::removeStructure(state.visuals.kSMesh);
+        state.visuals.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kernel.kHat);
+        state.visuals.kSMesh->setSurfaceColor(constants::colors::kernel);
+        state.visuals.kSMesh->setTransparency(constants::transparencies::kernel);
 
         return;
     }
 
-    Plane& plane = state.supportPlanes[state.currentPlaneIdx];
-    ExactPlane& exactPlane = state.exactSupportPlanes[state.currentPlaneIdx];
+    Plane& plane = state.kernel.supportPlanes[state.kernel.currentPlaneIdx];
+    ExactPlane& exactPlane = state.kernel.exactSupportPlanes[state.kernel.currentPlaneIdx];
 
     // Fast AABB Intersection check
     int aabb_class = classify_aabb(state, exactPlane);
     if (aabb_class == -1) {
         // fully in negative half-space, skip cut
         print::info("AABB Check: Plane does not intersect. Skipping cut.");
-        state.skippedCuts++;
-        state.currentPlaneIdx++;
+        state.tracking.skippedCuts++;
+        state.kernel.currentPlaneIdx++;
         return;
     } else if (aabb_class == 1) {
         // fully in positive half-space, kernel is destroyed
@@ -347,11 +347,11 @@ void step_kernel(AppState& state, bool updateVisuals = true) {
         print::info("AABB Check: " + msg);
         print::info("Kernel generation complete. Total linear fallbacks in edge_descent_exact: " + std::to_string(mesh_utils::get_linear_fallback_count()));
         polyscope::warning(msg);
-        state.statusMessage = msg;
-        state.statusMessageColor = ImVec4(0.95f, 0.35f, 0.25f, 1.0f);
-        state.kHat.clear();
-        state.isSteppingKernel = false;
-        state.currentPlaneIdx = state.supportPlanes.size();  // terminate
+        state.visuals.statusMessage = msg;
+        state.visuals.statusMessageColor = ImVec4(0.95f, 0.35f, 0.25f, 1.0f);
+        state.kernel.kHat.clear();
+        state.kernel.isSteppingKernel = false;
+        state.kernel.currentPlaneIdx = state.kernel.supportPlanes.size();  // terminate
         return;
     }
     
@@ -361,25 +361,25 @@ void step_kernel(AppState& state, bool updateVisuals = true) {
     }
 
     // Perform the cut
-    mesh_utils::cut_at_plane_exact(state, state.kHat, plane, state.exactSupportPlanes[state.currentPlaneIdx], state.updateVisuals);
+    mesh_utils::cut_at_plane_exact(state, state.kernel.kHat, plane, state.kernel.exactSupportPlanes[state.kernel.currentPlaneIdx], state.visuals.updateVisuals);
     
-    state.currentPlaneIdx++;
+    state.kernel.currentPlaneIdx++;
 
-    if (state.kHat.is_empty()) {
+    if (state.kernel.kHat.is_empty()) {
         std::string msg = "Kernel is empty (entirely discarded after plane cut).";
         print::info("Kernel Generation: " + msg);
         polyscope::warning(msg);
-        state.statusMessage = msg;
-        state.statusMessageColor = ImVec4(0.95f, 0.35f, 0.25f, 1.0f);
-        state.isSteppingKernel = false;
+        state.visuals.statusMessage = msg;
+        state.visuals.statusMessageColor = ImVec4(0.95f, 0.35f, 0.25f, 1.0f);
+        state.kernel.isSteppingKernel = false;
     }
 
     // Update the kernel surface mesh in Polyscope
     if (updateVisuals) {
-        if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
-        state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
-        state.kSMesh->setSurfaceColor(constants::colors::kernel);
-        state.kSMesh->setTransparency(constants::transparencies::kernel);
+        if (state.visuals.kSMesh) polyscope::removeStructure(state.visuals.kSMesh);
+        state.visuals.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kernel.kHat);
+        state.visuals.kSMesh->setSurfaceColor(constants::colors::kernel);
+        state.visuals.kSMesh->setTransparency(constants::transparencies::kernel);
     }
 }
 
@@ -388,15 +388,15 @@ void step_kernel(AppState& state, bool updateVisuals = true) {
  */
 void generate_kernel(AppState& state) {
     init_kernel_stepping(state);
-    while (state.isSteppingKernel) {
+    while (state.kernel.isSteppingKernel) {
         step_kernel(state);
     }
 
     // Final visual update
-    if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
-    state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
-    state.kSMesh->setSurfaceColor(constants::colors::kernel);
-    state.kSMesh->setTransparency(constants::transparencies::kernel);
+    if (state.visuals.kSMesh) polyscope::removeStructure(state.visuals.kSMesh);
+    state.visuals.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kernel.kHat);
+    state.visuals.kSMesh->setSurfaceColor(constants::colors::kernel);
+    state.visuals.kSMesh->setTransparency(constants::transparencies::kernel);
 }
 
 
@@ -404,7 +404,7 @@ void generate_kernel_parallel(AppState& state) {
     if (!state.meshLoaded || state.mesh.is_empty()) return;
 
     print::info("Starting parallel kernel generation...");
-    state.statusMessage.clear();
+    state.visuals.statusMessage.clear();
     mesh_utils::reset_linear_fallback_count();
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -414,10 +414,10 @@ void generate_kernel_parallel(AppState& state) {
         std::string msg = "Mesh has genus > 0. Kernel is empty.";
         print::info(msg);
         polyscope::warning(msg);
-        state.statusMessage = msg;
-        state.statusMessageColor = ImVec4(0.95f, 0.35f, 0.25f, 1.0f);
-        state.kHat.clear();
-        if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
+        state.visuals.statusMessage = msg;
+        state.visuals.statusMessageColor = ImVec4(0.95f, 0.35f, 0.25f, 1.0f);
+        state.kernel.kHat.clear();
+        if (state.visuals.kSMesh) polyscope::removeStructure(state.visuals.kSMesh);
         return;
     }
 
@@ -428,20 +428,20 @@ void generate_kernel_parallel(AppState& state) {
         std::string msg = "Mesh has no concave faces. Kernel is the mesh itself.";
         print::info(msg);
         polyscope::warning(msg);
-        state.statusMessage = msg;
-        state.statusMessageColor = ImVec4(0.25f, 0.85f, 0.45f, 1.0f);
-        state.kHat = state.mesh;
-        if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
-        state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
-        state.kSMesh->setSurfaceColor(constants::colors::kernel);
-        state.kSMesh->setTransparency(constants::transparencies::kernel);
+        state.visuals.statusMessage = msg;
+        state.visuals.statusMessageColor = ImVec4(0.25f, 0.85f, 0.45f, 1.0f);
+        state.kernel.kHat = state.mesh;
+        if (state.visuals.kSMesh) polyscope::removeStructure(state.visuals.kSMesh);
+        state.visuals.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kernel.kHat);
+        state.visuals.kSMesh->setSurfaceColor(constants::colors::kernel);
+        state.visuals.kSMesh->setTransparency(constants::transparencies::kernel);
         return;
     }
 
     pmp::BoundingBox bbox = pmp::bounds(state.mesh);
     pmp::Point center = bbox.center();
 
-    state.skippedCuts = 0;
+    state.tracking.skippedCuts = 0;
     std::atomic<int> local_skipped_cuts{0};  // Thread-safe counter
 
     // Extract unique supporting planes clustered by coplanarity & concavity
@@ -524,20 +524,20 @@ void generate_kernel_parallel(AppState& state) {
         if (empty_kernel_detected) continue;
 
         AppState local_state;
-        local_state.kHat = construct_aabb_mesh(bbox);
+        local_state.kernel.kHat = construct_aabb_mesh(bbox);
 
         // Initialize local AABB tracking
         for (int j = 0; j < 3; ++j) {
-            local_state.aabb_min[j] = std::numeric_limits<int64_t>::max();
-            local_state.aabb_max[j] = std::numeric_limits<int64_t>::lowest();
+            local_state.tracking.aabb_min[j] = std::numeric_limits<int64_t>::max();
+            local_state.tracking.aabb_max[j] = std::numeric_limits<int64_t>::lowest();
         }
-        auto exactPoints_k = local_state.kHat.get_vertex_property<ExactPoint>("v:exact_pos");
-        for (auto v : local_state.kHat.vertices()) {
+        auto exactPoints_k = local_state.kernel.kHat.get_vertex_property<ExactPoint>("v:exact_pos");
+        for (auto v : local_state.kernel.kHat.vertices()) {
             ExactPoint p = exactPoints_k[v];
             for (int j = 0; j < 3; ++j) {
                 int64_t val = static_cast<int64_t>(p.comp(j));
-                if (val < local_state.aabb_min[j]) { local_state.aabb_min[j] = val; local_state.aabb_v_min[j] = v; }
-                if (val > local_state.aabb_max[j]) { local_state.aabb_max[j] = val; local_state.aabb_v_max[j] = v; }
+                if (val < local_state.tracking.aabb_min[j]) { local_state.tracking.aabb_min[j] = val; local_state.tracking.aabb_v_min[j] = v; }
+                if (val > local_state.tracking.aabb_max[j]) { local_state.tracking.aabb_max[j] = val; local_state.tracking.aabb_v_max[j] = v; }
             }
         }
 
@@ -548,25 +548,25 @@ void generate_kernel_parallel(AppState& state) {
                 continue;
             };
             if (aabb_class == 1) {
-                local_state.kHat.clear();
+                local_state.kernel.kHat.clear();
                 empty_kernel_detected = true;
                 break;
             }
 
-            mesh_utils::cut_at_plane_exact(local_state, local_state.kHat, group_planes[i][p], group_exact[i][p], false);
-            if (local_state.kHat.is_empty()) {
+            mesh_utils::cut_at_plane_exact(local_state, local_state.kernel.kHat, group_planes[i][p], group_exact[i][p], false);
+            if (local_state.kernel.kHat.is_empty()) {
                 empty_kernel_detected = true;
                 break;
             }
         }
-        local_kernels[i] = std::move(local_state.kHat);
+        local_kernels[i] = std::move(local_state.kernel.kHat);
     }
 
-    state.skippedCuts = local_skipped_cuts.load();
+    state.tracking.skippedCuts = local_skipped_cuts.load();
 
     // * Merge surviving planes and compute final intersection
     if (empty_kernel_detected) {
-        state.kHat.clear();
+        state.kernel.kHat.clear();
     } else {
         std::vector<Plane> final_planes;
         std::vector<ExactPlane> final_exact;
@@ -586,18 +586,18 @@ void generate_kernel_parallel(AppState& state) {
         }
 
         // Final sequential cut on original AABB
-        state.kHat = construct_aabb_mesh(bbox);
+        state.kernel.kHat = construct_aabb_mesh(bbox);
         for (int j = 0; j < 3; ++j) {
-            state.aabb_min[j] = std::numeric_limits<int64_t>::max();
-            state.aabb_max[j] = std::numeric_limits<int64_t>::lowest();
+            state.tracking.aabb_min[j] = std::numeric_limits<int64_t>::max();
+            state.tracking.aabb_max[j] = std::numeric_limits<int64_t>::lowest();
         }
-        auto exactPoints_k = state.kHat.get_vertex_property<ExactPoint>("v:exact_pos");
-        for (auto v : state.kHat.vertices()) {
+        auto exactPoints_k = state.kernel.kHat.get_vertex_property<ExactPoint>("v:exact_pos");
+        for (auto v : state.kernel.kHat.vertices()) {
             ExactPoint pt = exactPoints_k[v];
             for (int j = 0; j < 3; ++j) {
                 int64_t val = static_cast<int64_t>(pt.comp(j));
-                if (val < state.aabb_min[j]) { state.aabb_min[j] = val; state.aabb_v_min[j] = v; }
-                if (val > state.aabb_max[j]) { state.aabb_max[j] = val; state.aabb_v_max[j] = v; }
+                if (val < state.tracking.aabb_min[j]) { state.tracking.aabb_min[j] = val; state.tracking.aabb_v_min[j] = v; }
+                if (val > state.tracking.aabb_max[j]) { state.tracking.aabb_max[j] = val; state.tracking.aabb_v_max[j] = v; }
             }
         }
 
@@ -605,31 +605,31 @@ void generate_kernel_parallel(AppState& state) {
             int aabb_class = classify_aabb(state, final_exact[p]);
             if (aabb_class == -1) continue;
             if (aabb_class == 1) {
-                state.kHat.clear();
+                state.kernel.kHat.clear();
                 break;
             }
-            mesh_utils::cut_at_plane_exact(state, state.kHat, final_planes[p], final_exact[p], false);
-            if (state.kHat.is_empty()) break;
+            mesh_utils::cut_at_plane_exact(state, state.kernel.kHat, final_planes[p], final_exact[p], false);
+            if (state.kernel.kHat.is_empty()) break;
         }
     }
 
     auto end_time = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = end_time - start_time;
-    state.lastComputeTime = elapsed.count();
+    state.kernel.lastComputeTime = elapsed.count();
     
-    if (state.kHat.is_empty()) {
+    if (state.kernel.kHat.is_empty()) {
         std::string msg = "Kernel is empty (entirely discarded during cutting).";
         print::info(msg);
         polyscope::warning(msg);
-        state.statusMessage = msg;
-        state.statusMessageColor = ImVec4(0.95f, 0.35f, 0.25f, 1.0f);
+        state.visuals.statusMessage = msg;
+        state.visuals.statusMessageColor = ImVec4(0.95f, 0.35f, 0.25f, 1.0f);
     }
 
     // * Update visuals
-    state.isSteppingKernel = false;
-    if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
-    state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
-    state.kSMesh->setSurfaceColor(constants::colors::kernel);
-    state.kSMesh->setTransparency(constants::transparencies::kernel);
+    state.kernel.isSteppingKernel = false;
+    if (state.visuals.kSMesh) polyscope::removeStructure(state.visuals.kSMesh);
+    state.visuals.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kernel.kHat);
+    state.visuals.kSMesh->setSurfaceColor(constants::colors::kernel);
+    state.visuals.kSMesh->setTransparency(constants::transparencies::kernel);
     print::info("Kernel generation complete. Total linear fallbacks in edge_descent_exact: " + std::to_string(mesh_utils::get_linear_fallback_count()));
 }

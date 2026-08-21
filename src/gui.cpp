@@ -22,32 +22,32 @@ void reset(AppState& state) {
     print::info("Resetting application state...");
     polyscope::removeAllStructures();
     state.mesh = pmp::SurfaceMesh();
-    state.kHat = pmp::SurfaceMesh();
+    state.kernel.kHat = pmp::SurfaceMesh();
     state.meshLoaded = false;
-    state.oSMesh = nullptr;
-    state.pc = nullptr;
-    state.kSMesh = nullptr;
+    state.visuals.oSMesh = nullptr;
+    state.visuals.pc = nullptr;
+    state.visuals.kSMesh = nullptr;
     state.bboxVertices.clear();
-    state.supportPlanes.clear();
-    state.exactSupportPlanes.clear();
-    state.hasActiveCutPlane = false;
-    state.isSteppingKernel = false;
-    state.currentPlaneIdx = 0;
-    state.lastComputeTime = 0.0;
-    state.skippedCuts = 0;
-    state.statusMessage.clear();
-    state.statusMessageColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+    state.kernel.supportPlanes.clear();
+    state.kernel.exactSupportPlanes.clear();
+    state.kernel.hasActiveCutPlane = false;
+    state.kernel.isSteppingKernel = false;
+    state.kernel.currentPlaneIdx = 0;
+    state.kernel.lastComputeTime = 0.0;
+    state.tracking.skippedCuts = 0;
+    state.visuals.statusMessage.clear();
+    state.visuals.statusMessageColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
 /**
  * Loads an OFF file by index, resets application state, and initializes properties and Polyscope structures.
  */
 void loadOffFile(AppState& state, int fileIdx) {
-    if (fileIdx < 0 || fileIdx >= static_cast<int>(state.offFiles.size())) return;
+    if (fileIdx < 0 || fileIdx >= static_cast<int>(state.io.offFiles.size())) return;
 
     reset(state);
-    state.selectedOffFileIdx = fileIdx;
-    std::filesystem::path selectedPath = std::filesystem::path(state.targetDir) / state.offFiles[fileIdx];
+    state.io.selectedOffFileIdx = fileIdx;
+    std::filesystem::path selectedPath = std::filesystem::path(state.io.targetDir) / state.io.offFiles[fileIdx];
 
     try {
         pmp::SurfaceMesh tempMesh;
@@ -85,22 +85,22 @@ void loadOffFile(AppState& state, int fileIdx) {
         state.mesh = std::move(tempMesh);
         print::info("Mesh loaded: " + std::to_string(state.mesh.n_vertices()) + " vertices, " + std::to_string(state.mesh.n_faces()) + " faces.");
 
-        state.oSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::mesh), state.mesh);
-        state.oSMesh->setSurfaceColor(constants::colors::mesh);
-        state.oSMesh->setTransparency(constants::transparencies::mesh);
-        state.pc = mesh_utils::register_pmp_pc(std::string(constants::polyNames::pc), state.mesh);
+        state.visuals.oSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::mesh), state.mesh);
+        state.visuals.oSMesh->setSurfaceColor(constants::colors::mesh);
+        state.visuals.oSMesh->setTransparency(constants::transparencies::mesh);
+        state.visuals.pc = mesh_utils::register_pmp_pc(std::string(constants::polyNames::pc), state.mesh);
         if (!state.mesh.is_empty()) state.meshLoaded = true;
 
         mesh_utils::register_bbox(state);
 
         // Point cloud cosmetics
-        state.pc->setEnabled(false);
+        state.visuals.pc->setEnabled(false);
 
         // Reset camera to fit the new mesh
         polyscope::view::resetCameraToHomeView();
     } catch (const std::exception& e) {
         print::error("Error while loading " + selectedPath.string() + ": " + std::string(e.what()));
-        state.selectedOffFileIdx = -1;
+        state.io.selectedOffFileIdx = -1;
         state.meshLoaded = false;
     }
 }
@@ -109,36 +109,36 @@ void loadOffFile(AppState& state, int fileIdx) {
  * Helper to scan the OFF file directory and populate the list in AppState of available files
  */
 void refreshOffFileList(AppState& state) {
-    state.offFiles.clear();
-    if (!std::filesystem::exists(state.targetDir)) return;
+    state.io.offFiles.clear();
+    if (!std::filesystem::exists(state.io.targetDir)) return;
 
-    for (const auto& entry : std::filesystem::directory_iterator(state.targetDir)) {
+    for (const auto& entry : std::filesystem::directory_iterator(state.io.targetDir)) {
         if (entry.path().extension() == ".off") {
-            state.offFiles.push_back(entry.path().filename().string());
+            state.io.offFiles.push_back(entry.path().filename().string());
         }
     }
 
-    std::sort(state.offFiles.begin(), state.offFiles.end());
+    std::sort(state.io.offFiles.begin(), state.io.offFiles.end());
 }    
 
 
 void render(AppState& state) {
-    if (state.offFiles.empty()) {
+    if (state.io.offFiles.empty()) {
         refreshOffFileList(state);
     }
 
     // * Mesh Loading Section
     ImGui::TextColored(constants::colors::guiTitle, "=== MESH LOADING ===");
-    ImGui::Text("OFF Files in Directory: %s", state.targetDir.c_str());
+    ImGui::Text("OFF Files in Directory: %s", state.io.targetDir.c_str());
 
     // * Dropdown to select OFF file
-    const char* preview = (state.selectedOffFileIdx >= 0) ? state.offFiles[state.selectedOffFileIdx].c_str() : "Select an OFF file";
+    const char* preview = (state.io.selectedOffFileIdx >= 0) ? state.io.offFiles[state.io.selectedOffFileIdx].c_str() : "Select an OFF file";
 
     if (ImGui::BeginCombo("OFF File", preview)) {
-        int nFiles = state.offFiles.size();
+        int nFiles = state.io.offFiles.size();
         for (int i = 0; i < nFiles; i++) {
-            const bool isSelected = (state.selectedOffFileIdx == i);
-            if (ImGui::Selectable(state.offFiles[i].c_str(), isSelected)) {
+            const bool isSelected = (state.io.selectedOffFileIdx == i);
+            if (ImGui::Selectable(state.io.offFiles[i].c_str(), isSelected)) {
                 loadOffFile(state, i);
             }
             if (isSelected) {
@@ -149,7 +149,7 @@ void render(AppState& state) {
     }
 
     // * Reset Button to reload the currently loaded mesh (at bottom of Mesh Loading section)
-    if (!state.meshLoaded || state.selectedOffFileIdx < 0) {
+    if (!state.meshLoaded || state.io.selectedOffFileIdx < 0) {
         ImGui::BeginDisabled();
     }
 
@@ -158,12 +158,12 @@ void render(AppState& state) {
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, constants::colors::guiResetButtonActive);
     
     if (ImGui::Button("Reset", constants::gui::buttonSize)) {
-        loadOffFile(state, state.selectedOffFileIdx);
+        loadOffFile(state, state.io.selectedOffFileIdx);
     }
 
     ImGui::PopStyleColor(3);  // For Reset Button
 
-    if (!state.meshLoaded || state.selectedOffFileIdx < 0) {
+    if (!state.meshLoaded || state.io.selectedOffFileIdx < 0) {
         ImGui::EndDisabled();
     }
 
@@ -181,7 +181,7 @@ void render(AppState& state) {
             for (size_t i = 0; i < isConcave.size(); ++i) {
                 scalarVal[i] = isConcave[i] ? 1.0 : 0.0;
             }
-            state.oSMesh->addFaceScalarQuantity("isConcave", scalarVal)->setEnabled(true);
+            state.visuals.oSMesh->addFaceScalarQuantity("isConcave", scalarVal)->setEnabled(true);
         }
 
         ImGui::Separator();
@@ -198,7 +198,7 @@ void render(AppState& state) {
             generate_kernel(state);
             auto end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> elapsed = end - start;
-            state.lastComputeTime = elapsed.count();
+            state.kernel.lastComputeTime = elapsed.count();
         }
 
         ImGui::SameLine();
@@ -240,20 +240,20 @@ void render(AppState& state) {
             ImGui::EndDisabled();
         }
 
-        if (!state.statusMessage.empty()) {
-            ImGui::TextColored(state.statusMessageColor, "%s", state.statusMessage.c_str());
+        if (!state.visuals.statusMessage.empty()) {
+            ImGui::TextColored(state.visuals.statusMessageColor, "%s", state.visuals.statusMessage.c_str());
         }
 
-        if (state.lastComputeTime > 0.0) {
-            ImGui::TextColored(constants::colors::guiInfo, "Last compute time: %.4f seconds", state.lastComputeTime);
+        if (state.kernel.lastComputeTime > 0.0) {
+            ImGui::TextColored(constants::colors::guiInfo, "Last compute time: %.4f seconds", state.kernel.lastComputeTime);
         }
 
         ImGui::Separator();
         ImGui::TextColored(constants::colors::guiTitle, "=== KERNEL STEPPING ===");
 
-        ImGui::Checkbox("Update Visuals During Stepping", &state.updateVisuals);
+        ImGui::Checkbox("Update Visuals During Stepping", &state.visuals.updateVisuals);
 
-        if (!state.isSteppingKernel) {
+        if (!state.kernel.isSteppingKernel) {
             ImGui::PushStyleColor(ImGuiCol_Button, constants::colors::guiLimeButton);
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, constants::colors::guiLimeButtonHovered);
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, constants::colors::guiLimeButtonActive);
@@ -264,32 +264,32 @@ void render(AppState& state) {
 
             ImGui::PopStyleColor(3);  // For Lime Button
 
-            if (state.kSMesh) {
+            if (state.visuals.kSMesh) {
                 ImGui::Separator();
                 ImGui::Text("Kernel Generation Finished");
-                ImGui::Text("Total Planes Processed: %zu", state.supportPlanes.size());
-                ImGui::TextColored(constants::colors::guiInfo, "Cuts skipped (AABB Check): %d", state.skippedCuts);
+                ImGui::Text("Total Planes Processed: %zu", state.kernel.supportPlanes.size());
+                ImGui::TextColored(constants::colors::guiInfo, "Cuts skipped (AABB Check): %d", state.tracking.skippedCuts);
             }
         } else {
-            ImGui::Text("Step: %d / %zu", state.currentPlaneIdx, state.supportPlanes.size());
-            ImGui::TextColored(constants::colors::guiInfo, "Cuts Skipped (AABB Check): %d", state.skippedCuts);
+            ImGui::Text("Step: %d / %zu", state.kernel.currentPlaneIdx, state.kernel.supportPlanes.size());
+            ImGui::TextColored(constants::colors::guiInfo, "Cuts Skipped (AABB Check): %d", state.tracking.skippedCuts);
             if (ImGui::Button("Next Step")) {
-                step_kernel(state, state.updateVisuals);
+                step_kernel(state, state.visuals.updateVisuals);
             }
             ImGui::SameLine();
             if (ImGui::Button("Finish Kernel")) {
-                while (state.isSteppingKernel) {
-                    step_kernel(state, state.updateVisuals);
+                while (state.kernel.isSteppingKernel) {
+                    step_kernel(state, state.visuals.updateVisuals);
                 }
 
                 // Final visual update
-                if (state.kSMesh) polyscope::removeStructure(state.kSMesh);
-                state.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kHat);
-                state.kSMesh->setSurfaceColor(constants::colors::kernel);
-                state.kSMesh->setTransparency(constants::transparencies::kernel);
+                if (state.visuals.kSMesh) polyscope::removeStructure(state.visuals.kSMesh);
+                state.visuals.kSMesh = mesh_utils::register_pmp_mesh(std::string(constants::polyNames::kernel), state.kernel.kHat);
+                state.visuals.kSMesh->setSurfaceColor(constants::colors::kernel);
+                state.visuals.kSMesh->setTransparency(constants::transparencies::kernel);
             }
             if (ImGui::Button("Cancel Stepping")) {
-                state.isSteppingKernel = false;
+                state.kernel.isSteppingKernel = false;
             }
         }
         
