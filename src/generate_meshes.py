@@ -1,5 +1,8 @@
+# NOTE: This script was largely generated using Gemini 3.1 Pro
+
 import math
 import argparse
+
 
 def write_off(filename, vertices, faces, integer_scale=None):
     """Writes the vertices and faces to an OFF file."""

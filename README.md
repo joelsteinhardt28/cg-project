@@ -45,3 +45,8 @@ To run the application:
 4. **Mesh Analysis & Visualization Utilities**:
    - **Visualize Face Normals**: Renders face normal vectors on the loaded surface mesh.
    - **Identify Concave Faces**: Identifies and visualizes concave faces on the surface mesh
+
+
+## Generate new meshes
+
+Included is the python script `generate_meshes.py` which can be used to generate new meshes. The script generates a set of meshes at different resolutions with varying genus and convexity properties, which can be used for testing the kernel generation algorithms.
