@@ -17,9 +17,13 @@ namespace mesh_utils {
     void visualize_cut_plane(AppState& state, const Plane& plane);
     void generate_random_bbox_plane(AppState& state);
     std::vector<bool> identify_concave_faces(const pmp::SurfaceMesh& mesh);
+    void visualize_face_normals(AppState& state);
 
     // Plane-Mesh Cutting
-    pmp::Halfedge edge_descent(pmp::SurfaceMesh& mesh, const Plane& plane);
-    pmp::Halfedge edge_descent_exact(pmp::SurfaceMesh& mesh, const Plane& plane, const ExactPlane& exactPlane);
+    pmp::Halfedge edge_descent(pmp::SurfaceMesh& mesh, const Plane& plane, const AppState* state = nullptr);
+    pmp::Halfedge edge_descent_exact(pmp::SurfaceMesh& mesh, const Plane& plane, const ExactPlane& exactPlane, const AppState* state = nullptr);
     void cut_at_plane_exact(AppState& state, pmp::SurfaceMesh& mesh, const Plane& plane, const ExactPlane& exactPlane, bool updateVisuals);
+
+    size_t get_linear_fallback_count();
+    void reset_linear_fallback_count();
 }

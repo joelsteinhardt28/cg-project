@@ -26,7 +26,7 @@ using ExactPlane = ipg::plane<ExactGeom>;
 
 using Color = glm::vec3; // RGB color, each component in [0,1]
 
-const float EPSILON = 1e-6f;
+const double EPSILON = 1e-6;
 
 
 /**
@@ -80,6 +80,7 @@ struct AppState {
 
     // * Application flags
     bool updateVisuals = false;
+    double lastComputeTime = 0.0;
 
     // * AABB Fast Intersection Tracking
     int64_t aabb_min[3] = {0, 0, 0};

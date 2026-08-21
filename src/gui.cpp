@@ -42,6 +42,8 @@ void refreshOffFileList(AppState& state) {
             state.offFiles.push_back(entry.path().filename().string());
         }
     }
+
+    std::sort(state.offFiles.begin(), state.offFiles.end());
 }    
 
 
@@ -126,6 +128,12 @@ void render(AppState& state) {
 
 
     if (state.meshLoaded) {
+        if (ImGui::Button("Visualize Face Normals")) {
+            mesh_utils::visualize_face_normals(state);
+        }
+
+        ImGui::SameLine();
+
         if (ImGui::Button("Identify Concave Faces")) {
             std::vector<bool> isConcave = mesh_utils::identify_concave_faces(state.mesh);
             std::vector<double> scalarVal(state.mesh.n_faces());
@@ -136,7 +144,21 @@ void render(AppState& state) {
         }
 
         if (ImGui::Button("Generate Kernel")) {
+            auto start = std::chrono::high_resolution_clock::now();
             generate_kernel(state);
+            auto end = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> elapsed = end - start;
+            state.lastComputeTime = elapsed.count();
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("Generate Kernel Parallel")) {
+            generate_kernel_parallel(state);
+        }
+
+        if (state.lastComputeTime > 0.0) {
+            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.8f, 1.0f), "Last compute time: %.4f seconds", state.lastComputeTime);
         }
 
         ImGui::Separator();
